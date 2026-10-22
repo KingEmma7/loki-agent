@@ -6,20 +6,17 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 import typer
-import litellm
-litellm.suppress_debug_info = True
 
 from loki import __version__
+from loki.ai import llm
 from loki.config import (
     activate_model_profile,
     add_model_profile,
     clear_active_model_profile,
     get_active_model_profile,
-    is_ai_customized,
     list_model_profiles,
     model_source,
     remove_model_profile,
-    resolve_ai_connection,
     resolve_model,
 )
 from loki.engine.updater import check_for_updates, print_update_banner, perform_update
@@ -611,70 +608,26 @@ Project & Testing Context:
                 # Keep system prompt at index 0, take last 10 messages
                 active_messages = [self.history[0]] + self.history[-10:]
 
-            # Any LiteLLM-compatible provider works here, not just Gemini/OpenAI/Anthropic.
-            # Sibling-model fallbacks (for transient "high demand" errors) only apply to
-            # LOKI's own bundled Gemini default — once the user configured `ai:` or
-            # --model, try exactly that and nothing else.
-            base_kwargs = resolve_ai_connection(self._explicit_model)
-            attempts = [base_kwargs] if is_ai_customized(self._explicit_model) else [
-                base_kwargs,
-                {**base_kwargs, "model": "gemini/gemini-3.6-flash"},
-                {**base_kwargs, "model": "gemini/gemini-flash-lite-latest"},
-                {**base_kwargs, "model": "gemini/gemini-3.5-flash-lite"},
-            ]
-
             success = False
-            reported_error = False
-            for kwargs in attempts:
-                try:
-                    with Status("[bold yellow]LOKI is thinking...[/bold yellow]", console=self.console):
-                        stream_response = litellm.completion(
-                            messages=active_messages,
-                            stream=True,
-                            timeout=25,
-                            num_retries=1,
-                            **kwargs,
-                        )
-                        # Read first token inside the status spinner to ensure response has started
-                        first_chunk = ""
-                        for chunk in stream_response:
-                            delta = chunk.choices[0].delta.content or ""
-                            if delta:
-                                first_chunk = delta
-                                break
-
-                    # Stream text cleanly to stdout
-                    self.console.print()
-                    sys.stdout.write(first_chunk)
+            try:
+                # Wait for the first token inside the spinner, then stream text cleanly to stdout
+                with Status("[bold yellow]LOKI is thinking...[/bold yellow]", console=self.console):
+                    chunks = llm.open_stream(active_messages, model=self._explicit_model)
+                self.console.print()
+                collected = []
+                for text in chunks:
+                    sys.stdout.write(text)
                     sys.stdout.flush()
+                    collected.append(text)
+                sys.stdout.write("\n")
+                sys.stdout.flush()
 
-                    collected = [first_chunk]
-                    for chunk in stream_response:
-                        delta = chunk.choices[0].delta.content or ""
-                        if delta:
-                            sys.stdout.write(delta)
-                            sys.stdout.flush()
-                            collected.append(delta)
-
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
-
-                    full_reply = "".join(collected)
-                    self.history.append({"role": "assistant", "content": full_reply})
-                    success = True
-                    break
-                except Exception as e:
-                    err_str = str(e).lower()
-                    if "503" in err_str or "unavailable" in err_str or "timeout" in err_str:
-                        # Silently try next fallback model
-                        continue
-                    else:
-                        self.console.print(f"\n[bold red]AI Error:[/bold red] {e}")
-                        reported_error = True
-                        break
+                self.history.append({"role": "assistant", "content": "".join(collected)})
+                success = True
+            except llm.LLMUnavailableError:
+                self.console.print("\n[bold red]AI Error:[/bold red] Service currently experiencing high demand. Please try again in a moment.")
+            except Exception as e:
+                self.console.print(f"\n[bold red]AI Error:[/bold red] {e}")
 
             if not success and self.history and self.history[-1].get("role") == "user":
                 self.history.pop()
-
-            if not success and not reported_error:
-                self.console.print("\n[bold red]AI Error:[/bold red] Service currently experiencing high demand. Please try again in a moment.")

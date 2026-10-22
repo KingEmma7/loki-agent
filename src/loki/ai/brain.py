@@ -1,11 +1,10 @@
 import json
 from pathlib import Path
 from typing import Any
-import litellm
-litellm.suppress_debug_info = True
+from loki.ai import llm
 from loki.models import IncidentReport
 from loki.engine.healer import CodeHealer
-from loki.config import is_ai_customized, resolve_ai_connection
+from loki.config import is_ai_customized
 
 
 class AIBrain:
@@ -91,44 +90,21 @@ Please provide your answer with the following structure:
 3. **Recommended Fix**: Provide the exact code diff or corrected code snippet to prevent this failure (e.g. debouncing, disabling button, optional chaining, try/catch, error boundary, fallback UI).
 """
 
-        # Any LiteLLM-compatible provider works here — not just Gemini/OpenAI/Anthropic.
-        # Only the bundled Gemini default gets extra sibling-model fallbacks: once the
-        # user has pointed `ai:` (or --model) at something else, try exactly that and
-        # nothing else, so we never silently fall back to a provider they didn't ask for.
-        customized = is_ai_customized(model)
-        base_kwargs = resolve_ai_connection(model)
-        attempts = [base_kwargs] if customized else [
-            base_kwargs,
-            {**base_kwargs, "model": "gemini/gemini-flash-lite-latest"},
-            {**base_kwargs, "model": "gemini/gemini-3.6-flash"},
-            {**base_kwargs, "model": "gemini/gemini-3.5-flash-lite"},
-        ]
-
-        last_error: Exception | None = None
-        for kwargs in attempts:
-            try:
-                response = litellm.completion(
-                    messages=[{"role": "user", "content": prompt}],
-                    timeout=25,
-                    num_retries=1,
-                    **kwargs,
-                )
-                analysis = response.choices[0].message.content
-                return {
-                    "run_id": target_dir.name,
-                    "incident": incident_data,
-                    "diagnosis": analysis,
-                }
-            except Exception as e:
-                last_error = e
-                continue
+        try:
+            return {
+                "run_id": target_dir.name,
+                "incident": incident_data,
+                "diagnosis": llm.complete(prompt, model=model),
+            }
+        except llm.LLMError as e:
+            last_error = e
 
         # Every attempt failed (missing/invalid key, unreachable endpoint, provider
         # outage...) — fall back to a deterministic diagnosis built only from evidence.
         hint = (
             "Check the connection configured under `ai:` in `.loki/config.yaml` "
             "(model, api_base, api_key_env)."
-            if customized else
+            if is_ai_customized(model) else
             "Set `GEMINI_API_KEY`, or configure `ai:` in `.loki/config.yaml` to point at "
             "any other LiteLLM-compatible provider (OpenAI, Anthropic, Mistral, Groq, a "
             "local Ollama/vLLM server, or any OpenAI-compatible endpoint via `api_base`)."
@@ -197,36 +173,11 @@ Respond ONLY with a valid JSON array of objects following this exact schema:
   }}
 ]
 """
-        customized = is_ai_customized(model)
-        base_kwargs = resolve_ai_connection(model)
-        attempts = [base_kwargs] if customized else [base_kwargs, {**base_kwargs, "model": "gemini/gemini-flash-lite-latest"}]
-
-        last_error: Exception | None = None
-        for kwargs in attempts:
-            try:
-                response = litellm.completion(
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.1,
-                    timeout=25,
-                    num_retries=1,
-                    **kwargs,
-                )
-                raw = response.choices[0].message.content.strip()
-                # Clean possible markdown formatting
-                if raw.startswith("```"):
-                    lines = raw.split("\n")
-                    if lines[0].startswith("```"):
-                        lines = lines[1:]
-                    if lines and lines[-1].startswith("```"):
-                        lines = lines[:-1]
-                    raw = "\n".join(lines).strip()
-                return json.loads(raw)
-            except Exception as e:
-                last_error = e
-                continue
-
-        return [{
-            "rule": "Business Rules Evaluation Error",
-            "status": "ERROR",
-            "observation": f"AI model evaluation error: {last_error}"
-        }]
+        try:
+            return llm.complete_json(prompt, model=model, validate=lambda data: isinstance(data, list))
+        except llm.LLMError as e:
+            return [{
+                "rule": "Business Rules Evaluation Error",
+                "status": "ERROR",
+                "observation": f"AI model evaluation error: {e}"
+            }]

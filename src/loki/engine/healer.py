@@ -5,11 +5,8 @@ import difflib
 from pathlib import Path
 from typing import Any
 
-import litellm
-litellm.suppress_debug_info = True
-
+from loki.ai import llm
 from loki.engine.replayer import IncidentReplayer
-from loki.config import is_ai_customized, resolve_ai_connection
 
 
 class CodeHealer:
@@ -152,37 +149,18 @@ Instructions:
 Do NOT output any markdown formatting or commentary outside the JSON.
 """
 
-        # Any LiteLLM-compatible provider works here, not just Gemini/OpenAI/Anthropic.
-        # Once the user has customized `ai:` (or passed --model), try exactly that and
-        # nothing else — never silently swap in a provider they didn't configure.
-        customized = is_ai_customized(model)
-        base_kwargs = resolve_ai_connection(model)
-        attempts = [base_kwargs] if customized else [
-            base_kwargs,
-            {**base_kwargs, "model": "gemini/gemini-flash-lite-latest"},
-            {**base_kwargs, "model": "gemini/gemini-3.5-flash-lite"},
-        ]
-        for kwargs in attempts:
-            try:
-                response = litellm.completion(
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.1,
-                    timeout=30,
-                    num_retries=1,
-                    **kwargs,
-                )
-                raw_text = response.choices[0].message.content or ""
-                # Strip markdown code blocks if wrapped
-                cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text.strip(), flags=re.MULTILINE)
-                cleaned = re.sub(r"\s*```$", "", cleaned.strip(), flags=re.MULTILINE)
-
-                patch_data = json.loads(cleaned)
-                if "original_snippet" in patch_data and "replacement_snippet" in patch_data:
-                    patch_data["success"] = True
-                    patch_data["target_file"] = str(target_file)
-                    return patch_data
-            except Exception:
-                continue
+        try:
+            patch_data = llm.complete_json(
+                prompt,
+                model=model,
+                validate=lambda data: isinstance(data, dict) and "original_snippet" in data and "replacement_snippet" in data,
+                timeout=30,
+            )
+            patch_data["success"] = True
+            patch_data["target_file"] = str(target_file)
+            return patch_data
+        except llm.LLMError:
+            pass
 
         # Fallback if cloud API is unavailable (e.g. 503 spike or network issue)
         fallback = self._playground_fallback_patch(target_file, source_code)
