@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
-from loki.engine.sandbox import IncidentReport, ChaosSandbox
+from loki.engine.sandbox import ChaosSandbox
+from loki.models import IncidentReport
 from loki.engine.reporter import IncidentReporter
 from loki.engine.html_reporter import HTMLReporter
 from loki.engine.ci import CIGate

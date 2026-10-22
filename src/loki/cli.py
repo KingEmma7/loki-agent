@@ -26,11 +26,7 @@ from loki.engine.sandbox import ChaosSandbox
 from loki.engine.reporter import IncidentReporter
 from loki.engine.html_reporter import HTMLReporter
 from loki.engine.scanner import ProjectScanner
-from loki.personas.rage_clicker import RageClickerPersona
-from loki.personas.novice_chaotic import NoviceChaoticPersona
-from loki.personas.network_tormentor import NetworkTormentorPersona
-from loki.personas.adversary import AdversaryPersona
-from loki.personas.swarm import SwarmPersona
+from loki.personas.registry import API_CHAOS_PERSONAS, PersonaChoice, build_persona
 from loki.ai.brain import AIBrain
 from loki.ai.chat import LokiChatSession
 from loki.engine.recorder import JourneyRecorder
@@ -256,16 +252,6 @@ def infra_cleanup():
     if already_gone:
         lines.append(f"{len(already_gone)} tracked worker(s) were already gone: {', '.join(map(str, already_gone))}")
     console.print(Panel("\n".join(lines), title="[bold green]✔ cleanup[/bold green]", border_style="green"))
-
-
-class PersonaChoice(str, Enum):
-    RAGE_CLICKER = "rage-clicker"
-    NOVICE_CHAOTIC = "novice-chaotic"
-    NETWORK_TORMENTOR = "network-tormentor"
-    ADVERSARY = "adversary"
-    SWARM = "swarm"
-    ALL = "all"
-    NONE = "none"
 
 
 class BrowserChoice(str, Enum):
@@ -522,17 +508,14 @@ def run(
     resolved_seed = seed if seed is not None else random.randint(100000, 999999)
     random.seed(resolved_seed)
 
-    active_persona = None
-    if swarm or persona in [PersonaChoice.SWARM, PersonaChoice.ALL]:
-        active_persona = SwarmPersona(click_burst_count=burst_count, api_chaos_config=api_chaos_config, seed=resolved_seed)
-    elif persona == PersonaChoice.RAGE_CLICKER:
-        active_persona = RageClickerPersona(click_burst_count=burst_count, seed=resolved_seed)
-    elif persona == PersonaChoice.NOVICE_CHAOTIC:
-        active_persona = NoviceChaoticPersona(seed=resolved_seed)
-    elif persona == PersonaChoice.NETWORK_TORMENTOR:
-        active_persona = NetworkTormentorPersona(api_chaos_config=api_chaos_config, seed=resolved_seed)
-    elif persona == PersonaChoice.ADVERSARY:
-        active_persona = AdversaryPersona(seed=resolved_seed)
+    if swarm:
+        persona = PersonaChoice.SWARM
+    active_persona = build_persona(
+        persona,
+        click_burst_count=burst_count,
+        api_chaos_config=api_chaos_config,
+        seed=resolved_seed,
+    )
 
     if active_persona and active_persona.name == "Swarm":
         persona_label = "Swarm 🐝 [dim](NoviceChaotic, Adversary, NetworkTormentor, RageClicker)[/dim]"
@@ -547,7 +530,7 @@ def run(
     console.print(f"[bold magenta]🎭 Active Persona:[/bold magenta] {persona_label}")
     if device:
         console.print(f"[bold green]📱 Requested Device:[/bold green] {device} ({orientation})")
-    if api_chaos_config.enabled and (swarm or persona in [PersonaChoice.SWARM, PersonaChoice.ALL, PersonaChoice.NETWORK_TORMENTOR]):
+    if api_chaos_config.enabled and persona in API_CHAOS_PERSONAS:
         auth_status = "on" if api_chaos_config.auth_chaos_enabled else "off"
         console.print(
             f"[bold magenta]⚡ API Chaos (Ghost in the Wire):[/bold magenta] Active "

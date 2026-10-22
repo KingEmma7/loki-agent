@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 from loki.cli import app
-from loki.engine.sandbox import IncidentReport
+from loki.models import IncidentReport
 from loki.engine.reporter import IncidentReporter
 from loki.engine.html_reporter import HTMLReporter
 from loki.engine.ci import CIGate

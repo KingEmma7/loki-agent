@@ -9,7 +9,8 @@ from loki.engine.ci import CIGate
 from loki.engine.html_reporter import HTMLReporter
 from loki.engine.recorder import JourneyRecorder
 from loki.engine.reporter import IncidentReporter
-from loki.engine.sandbox import ChaosSandbox, IncidentReport
+from loki.engine.sandbox import ChaosSandbox
+from loki.models import IncidentReport
 
 
 def test_browser_choice_enum():

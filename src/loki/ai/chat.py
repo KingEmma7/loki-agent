@@ -316,7 +316,8 @@ class LokiChatSession:
     def _handle_run_command(self, args: str):
         """Parses `/run [url] [flags]` and launches a real chaos session via the same
         `run()` used by `loki run`, without leaving the chat."""
-        from loki.cli import PersonaChoice, BrowserChoice, run as cli_run
+        from loki.cli import BrowserChoice, run as cli_run
+        from loki.personas.registry import PersonaChoice
 
         tokens = args.split()
         url = None

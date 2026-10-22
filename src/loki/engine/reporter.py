@@ -3,7 +3,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from loki.engine.sandbox import IncidentReport
+from loki.models import IncidentReport
 from loki.engine.html_reporter import HTMLReporter
 from loki.engine.scrubber import NetworkScrubber
 

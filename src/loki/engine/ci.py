@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import Any
-from loki.engine.sandbox import IncidentReport
+from loki.models import IncidentReport
 
 
 class CIGate:

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 import litellm
 litellm.suppress_debug_info = True
-from loki.engine.sandbox import IncidentReport
+from loki.models import IncidentReport
 from loki.engine.healer import CodeHealer
 from loki.config import is_ai_customized, resolve_ai_connection
 

@@ -274,7 +274,7 @@ class TestPersonaIntegration:
 
 class TestReporterReproIntegration:
     def test_repro_script_contains_api_faults(self):
-        from loki.engine.sandbox import IncidentReport
+        from loki.models import IncidentReport
         from loki.engine.reporter import IncidentReporter
 
         report = IncidentReport(
@@ -298,7 +298,7 @@ class TestReporterReproIntegration:
         assert "deterministic API mock routes" in code
 
     def test_save_session_persists_api_faults(self, tmp_path):
-        from loki.engine.sandbox import IncidentReport
+        from loki.models import IncidentReport
         from loki.engine.reporter import IncidentReporter
 
         report = IncidentReport(
