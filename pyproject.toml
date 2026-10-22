@@ -69,6 +69,9 @@ version = { attr = "loki.__version__" }
 where = ["src"]
 include = ["loki*"]
 
+[tool.setuptools.package-data]
+"loki.templates" = ["*.tmpl", "*.html"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

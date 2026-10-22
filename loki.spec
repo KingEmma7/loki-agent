@@ -44,8 +44,11 @@ litellm_datas = [
     and "out" not in src
 ]
 
+# LOKI's own artifact templates (repro scripts, HTML report), read via importlib.resources
+loki_template_datas = [(str(repo_root / "src" / "loki" / "templates"), "loki/templates")]
+
 # Combined datas, binaries, and hidden imports
-datas = playwright_datas + rich_datas + typer_datas + litellm_datas
+datas = playwright_datas + rich_datas + typer_datas + litellm_datas + loki_template_datas
 binaries = playwright_binaries + rich_binaries + typer_binaries
 
 hiddenimports = (
@@ -56,11 +59,17 @@ hiddenimports = (
     + [
         "loki.cli",
         "loki.config",
+        "loki.models",
         "loki.safety",
+        "loki.templates",
         "loki.ai.brain",
         "loki.ai.chat",
+        "loki.ai.llm",
         "loki.engine.api_chaos",
+        "loki.engine.browser",
         "loki.engine.ci",
+        "loki.engine.detectors",
+        "loki.engine.devices",
         "loki.engine.healer",
         "loki.engine.html_reporter",
         "loki.engine.infra_chaos",
@@ -76,7 +85,10 @@ hiddenimports = (
         "loki.personas.network_tormentor",
         "loki.personas.novice_chaotic",
         "loki.personas.rage_clicker",
+        "loki.personas.registry",
         "loki.personas.swarm",
+        "loki.services.heal",
+        "loki.services.run",
         "PIL",
         "yaml",
         "psutil",
