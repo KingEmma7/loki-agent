@@ -14,7 +14,6 @@ Security fixes and patches are applied to the active development branch (`main`)
 | Any older release | ❌ End of Life |
 
 ---
----
 
 ## 2. Reporting a Vulnerability
 
