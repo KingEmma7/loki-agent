@@ -551,21 +551,26 @@ class TestCliAndConfigIntegration:
         assert swarm.network.api_chaos.config.fault_rate == 0.99
         assert swarm.network.api_chaos.config.auth_chaos_enabled is False
 
-    def test_chat_handle_run_command_api_chaos_flags(self, monkeypatch):
+    def test_chat_run_command_api_chaos_flags(self, monkeypatch):
+        from loki import cli
         from loki.ai.chat import LokiChatSession
+        from loki.services.run import RunSetupError
 
         captured = {}
 
-        def mock_run_cli_action(self, description, fn, **kwargs):
-            captured.update(kwargs)
+        def capture_and_stop(options):
+            captured["options"] = options
+            raise RunSetupError("stop before launching a browser")
 
-        monkeypatch.setattr(LokiChatSession, "_run_cli_action", mock_run_cli_action)
+        monkeypatch.setattr(cli, "prepare_run", capture_and_stop)
         session = LokiChatSession()
 
-        session._handle_run_command("http://localhost:8000 --api-chaos --fault-rate 0.65 --no-auth-chaos")
-        assert captured.get("api_chaos") is True
-        assert captured.get("fault_rate") == 0.65
-        assert captured.get("auth_chaos") is False
+        session._invoke_cli_command("run", "http://localhost:8000 --api-chaos --fault-rate 0.65 --no-auth-chaos")
+        options = captured["options"]
+        assert options.url == "http://localhost:8000"
+        assert options.api_chaos is True
+        assert options.fault_rate == 0.65
+        assert options.auth_chaos is False
 
 
 class TestHtmlTelemetryAndAiDiagnosis:

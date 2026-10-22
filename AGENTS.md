@@ -123,9 +123,9 @@ $PYTHON = ".\.venv\Scripts\python.exe"
 &$PYTHON -m loki.cli chat --model gemini/gemini-3.5-flash-lite
 # Inside chat: /model lists/switches/adds AI model profiles (.loki/models.json),
 # applied immediately to chat, rules evaluation, fix, and auto-heal alike.
-# Inside chat: /run, /fix, /report call the same run()/fix()/report() functions
-# as the standalone CLI commands directly (see src/loki/ai/chat.py's
-# _run_cli_action) — no separate reimplementation to keep in sync.
+# Inside chat: /run, /fix, /report are parsed and dispatched by the CLI's own
+# Typer command group (see src/loki/ai/chat.py's _invoke_cli_command), so they
+# take exactly the same flags (and --help) — no second parser to keep in sync.
 
 # 8. Infrastructure chaos — faults below the browser (src/loki/engine/infra_chaos.py)
 &$PYTHON -m loki.cli infra list                        # Find a --port/--pid to target

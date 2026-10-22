@@ -84,16 +84,73 @@ def test_chat_repl_survives_cli_action_system_exit(monkeypatch):
     monkeypatch.setattr(chat.LokiChatSession, "_load_project_context", lambda self: "")
     monkeypatch.setattr(chat, "check_for_updates", lambda: None)
 
-    # Mock the underlying run function to call sys.exit(1)
-    from loki import cli
+    # Mock the CLI group so invoking `loki run` calls sys.exit(1)
+    from unittest.mock import MagicMock
 
-    def crashing_run(**kwargs):
-        sys.exit(1)
-
-    monkeypatch.setattr(cli, "run", crashing_run)
+    group = MagicMock()
+    group.main.side_effect = lambda **kwargs: sys.exit(1)
+    monkeypatch.setattr(chat, "_cli_group", lambda: group)
 
     session = chat.LokiChatSession()
     # If SystemExit escaped, this would raise SystemExit and fail the test
     session.start()
     # Reached here cleanly!
+    group.main.assert_called_once_with(
+        args=["run", "http://example.com", "--ci"], prog_name="loki", standalone_mode=False
+    )
+
+
+def _quiet_session():
+    from unittest.mock import MagicMock
+
+    session = chat.LokiChatSession()
+    session.console = MagicMock()
+    return session
+
+
+def _printed(session) -> str:
+    return " ".join(str(call) for call in session.console.print.call_args_list)
+
+
+def test_slash_command_usage_error_is_reported_not_raised():
+    session = _quiet_session()
+    session._invoke_cli_command("run", "--no-such-flag")
+    assert "No such option" in _printed(session)
+
+
+def test_slash_command_type_validation_comes_from_cli():
+    session = _quiet_session()
+    session._invoke_cli_command("run", "--duration abc")
+    assert "is not a valid int" in _printed(session)
+
+
+def test_slash_command_forwards_quoted_args_and_exit_code(monkeypatch):
+    from unittest.mock import MagicMock
+
+    group = MagicMock()
+    group.main.return_value = 1
+    monkeypatch.setattr(chat, "_cli_group", lambda: group)
+
+    session = _quiet_session()
+    session._invoke_cli_command("run", '--target-selector "button.primary span" -j C:\\flows\\checkout.json')
+    group.main.assert_called_once_with(
+        args=["run", "--target-selector", "button.primary span", "-j", "C:\\flows\\checkout.json"],
+        prog_name="loki",
+        standalone_mode=False,
+    )
+    assert "finished with exit code 1" in _printed(session)
+
+
+def test_slash_command_unbalanced_quotes():
+    session = _quiet_session()
+    session._invoke_cli_command("run", '--target-selector "unterminated')
+    assert "Could not parse /run arguments" in _printed(session)
+
+
+def test_completer_flags_follow_cli_options():
+    run_flags = chat._cli_long_flags("run")
+    for flag in ("--persona", "--browser", "--seed", "--auto-heal", "--no-rules", "--target-selector"):
+        assert flag in run_flags
+    assert "--apply" in chat._cli_long_flags("fix")
+    assert "--no-open" in chat._cli_long_flags("report")
 

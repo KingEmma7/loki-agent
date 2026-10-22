@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,36 @@ from prompt_toolkit.layout.containers import Float, FloatContainer, HSplit
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
+
+
+CLI_SLASH_COMMANDS = ("run", "fix", "report")
+
+
+def _cli_group():
+    """The `loki` CLI as a Typer/Click command group (imported lazily: loki.cli imports this module)."""
+    from loki.cli import app
+    return typer.main.get_command(app)
+
+
+def _cli_long_flags(command: str) -> dict[str, None]:
+    """Long option names of a `loki` CLI command, for slash-command autocomplete."""
+    params = _cli_group().commands[command].params
+    flags = [
+        opt
+        for param in params
+        if param.param_type_name == "option"
+        for opt in [*param.opts, *param.secondary_opts]
+        if opt.startswith("--")
+    ]
+    return dict.fromkeys(flags)
+
+
+def _split_slash_args(args: str) -> list[str]:
+    """Shell-like split that honors quotes but keeps backslashes literal (Windows paths)."""
+    lexer = shlex.shlex(args, posix=True)
+    lexer.whitespace_split = True
+    lexer.escape = ""
+    return list(lexer)
 
 
 class _SlashNestedCompleter(NestedCompleter):
@@ -313,216 +344,27 @@ class LokiChatSession:
         except Exception as e:
             self.console.print(f"[bold red]Error running {description}:[/bold red] {e}")
 
-    def _handle_run_command(self, args: str):
-        """Parses `/run [url] [flags]` and launches a real chaos session via the same
-        `run()` used by `loki run`, without leaving the chat."""
-        from loki.cli import BrowserChoice, run as cli_run
-        from loki.personas.registry import PersonaChoice
+    def _invoke_cli_command(self, command: str, args: str):
+        """Runs `loki <command> <args>` for /run, /fix and /report through the CLI's own
+        Typer parser, so the slash commands accept exactly the same flags, defaults,
+        validation and `--help` as the standalone commands — no second parser to keep in sync."""
+        try:
+            tokens = _split_slash_args(args)
+        except ValueError as e:
+            self.console.print(f"[yellow]Could not parse /{command} arguments: {e}[/yellow]")
+            return
 
-        tokens = args.split()
-        url = None
-        persona_raw = None
-        browser_raw = None
-        kwargs: dict[str, Any] = dict(
-            duration=None, headed=False, swarm=False, journey=None,
-            rules=True, report_html=True, open_report=False, ci=False,
-            strict=False, auto_heal=False, device=None, orientation="portrait",
-            concurrency=1, target_selector=None, authorized=False,
-            api_chaos=None, fault_rate=None, auth_chaos=None, seed=None,
-        )
-
-        i = 0
-        while i < len(tokens):
-            t = tokens[i]
-            low = t.lower()
-
-            def _next_value(flag: str = t) -> str | None:
-                nonlocal i
-                if i + 1 >= len(tokens):
-                    self.console.print(f"[yellow]Missing value after {flag}[/yellow]")
-                    return None
-                i += 1
-                return tokens[i]
-
-            if low in ("-d", "--duration"):
-                v = _next_value()
-                if v is None:
-                    return
-                try:
-                    kwargs["duration"] = int(v)
-                except ValueError:
-                    self.console.print(f"[yellow]--duration expects a number, got '{v}'[/yellow]")
-                    return
-            elif low in ("-p", "--persona"):
-                v = _next_value()
-                if v is None:
-                    return
-                persona_raw = v
-            elif low in ("-j", "--journey"):
-                v = _next_value()
-                if v is None:
-                    return
-                kwargs["journey"] = v
-            elif low in ("-m", "--device"):
-                v = _next_value()
-                if v is None:
-                    return
-                kwargs["device"] = v
-            elif low == "--orientation":
-                v = _next_value()
-                if v is None:
-                    return
-                kwargs["orientation"] = v
-            elif low in ("-c", "--concurrency"):
-                v = _next_value()
-                if v is None:
-                    return
-                try:
-                    kwargs["concurrency"] = int(v)
-                except ValueError:
-                    self.console.print(f"[yellow]--concurrency expects a number, got '{v}'[/yellow]")
-                    return
-            elif low == "--target-selector":
-                v = _next_value()
-                if v is None:
-                    return
-                kwargs["target_selector"] = v
-            elif low == "--headed":
-                kwargs["headed"] = True
-            elif low in ("-s", "--swarm"):
-                kwargs["swarm"] = True
-            elif low in ("-r", "--rules"):
-                kwargs["rules"] = True
-            elif low in ("-nr", "--no-rules"):
-                kwargs["rules"] = False
-            elif low == "--report":
-                kwargs["report_html"] = True
-            elif low == "--no-report":
-                kwargs["report_html"] = False
-            elif low in ("-o", "--open"):
-                kwargs["open_report"] = True
-            elif low == "--ci":
-                kwargs["ci"] = True
-            elif low == "--strict":
-                kwargs["strict"] = True
-            elif low in ("-H", "--auto-heal"):
-                kwargs["auto_heal"] = True
-            elif low == "--authorized":
-                kwargs["authorized"] = True
-            elif low == "--api-chaos":
-                kwargs["api_chaos"] = True
-            elif low == "--no-api-chaos":
-                kwargs["api_chaos"] = False
-            elif low == "--fault-rate":
-                v = _next_value()
-                if v is None:
-                    return
-                try:
-                    kwargs["fault_rate"] = float(v)
-                except ValueError:
-                    self.console.print(f"[yellow]--fault-rate expects a float number, got '{v}'[/yellow]")
-                    return
-            elif low == "--auth-chaos":
-                kwargs["auth_chaos"] = True
-            elif low == "--no-auth-chaos":
-                kwargs["auth_chaos"] = False
-            elif low == "--seed":
-                v = _next_value()
-                if v is None:
-                    return
-                try:
-                    kwargs["seed"] = int(v)
-                except ValueError:
-                    self.console.print(f"[yellow]--seed expects an integer, got '{v}'[/yellow]")
-                    return
-            elif low in ("-b", "--browser"):
-                v = _next_value()
-                if v is None:
-                    return
-                browser_raw = v
-            elif not t.startswith("-") and url is None:
-                url = t
-            else:
-                self.console.print(f"[yellow]Unknown /run option: {t}[/yellow]")
-                return
-            i += 1
-
-        persona = None
-        if persona_raw:
+        def invoke():
             try:
-                persona = PersonaChoice(persona_raw.lower())
-            except ValueError:
-                valid = ", ".join(p.value for p in PersonaChoice)
-                self.console.print(f"[yellow]Unknown persona '{persona_raw}'. Valid options: {valid}[/yellow]")
+                exit_code = _cli_group().main(args=[command, *tokens], prog_name="loki", standalone_mode=False)
+            except typer.TyperException as e:
+                message = e.format_message() if hasattr(e, "format_message") else str(e)
+                self.console.print(f"[yellow]{message}[/yellow] [dim](see /{command} --help)[/dim]")
                 return
+            if exit_code:
+                raise typer.Exit(code=exit_code)
 
-        browser = BrowserChoice.CHROMIUM
-        if browser_raw:
-            try:
-                browser = BrowserChoice(browser_raw.lower())
-            except ValueError:
-                valid = ", ".join(b.value for b in BrowserChoice)
-                self.console.print(f"[yellow]Unknown browser '{browser_raw}'. Valid options: {valid}[/yellow]")
-                return
-
-        self._run_cli_action("loki run", cli_run, url=url, persona=persona, browser=browser, **kwargs)
-
-    def _handle_fix_command(self, args: str):
-        """Parses `/fix [run_id] [flags]` and runs the same diagnosis/patch flow as `loki fix`."""
-        from loki.cli import fix as cli_fix
-
-        tokens = args.split()
-        run_id = None
-        apply_, yes, verify, model = False, False, True, None
-
-        i = 0
-        while i < len(tokens):
-            t = tokens[i]
-            low = t.lower()
-            if low in ("-a", "--apply"):
-                apply_ = True
-            elif low in ("-y", "--yes"):
-                yes = True
-            elif low == "--no-verify":
-                verify = False
-            elif low == "--verify":
-                verify = True
-            elif low in ("-m", "--model"):
-                if i + 1 >= len(tokens):
-                    self.console.print(f"[yellow]Missing value after {t}[/yellow]")
-                    return
-                i += 1
-                model = tokens[i]
-            elif not t.startswith("-") and run_id is None:
-                run_id = t
-            else:
-                self.console.print(f"[yellow]Unknown /fix option: {t}[/yellow]")
-                return
-            i += 1
-
-        self._run_cli_action("loki fix", cli_fix, run_id=run_id, apply=apply_, yes=yes, verify=verify, model=model)
-
-    def _handle_report_command(self, args: str):
-        """Parses `/report [run_id] [--no-open]` and opens/generates the HTML report,
-        same as `loki report`."""
-        from loki.cli import report as cli_report
-
-        tokens = args.split()
-        run_id = None
-        open_browser = True
-        for t in tokens:
-            low = t.lower()
-            if low == "--no-open":
-                open_browser = False
-            elif low in ("-o", "--open"):
-                open_browser = True
-            elif not t.startswith("-") and run_id is None:
-                run_id = t
-            else:
-                self.console.print(f"[yellow]Unknown /report option: {t}[/yellow]")
-                return
-
-        self._run_cli_action("loki report", cli_report, run_id=run_id, open_browser=open_browser)
+        self._run_cli_action(f"loki {command}", invoke)
 
     def _handle_update_command(self):
         """Checks for updates and executes the self-update via uv if requested."""
@@ -566,14 +408,7 @@ class LokiChatSession:
         })
         return _SlashNestedCompleter.from_nested_dict({
             "/model": model_targets,
-            "/run": {
-                "--persona": None, "--swarm": None, "--device": None, "--journey": None,
-                "--concurrency": None, "--auto-heal": None, "--headed": None, "--no-rules": None,
-                "--api-chaos": None, "--no-api-chaos": None, "--fault-rate": None,
-                "--auth-chaos": None, "--no-auth-chaos": None,
-            },
-            "/fix": {"--apply": None, "--yes": None, "--no-verify": None, "--model": None},
-            "/report": {"--no-open": None},
+            **{f"/{c}": _cli_long_flags(c) for c in CLI_SLASH_COMMANDS},
             "/runs": None,
             "/rules": None,
             "/update": None,
@@ -725,6 +560,7 @@ Project & Testing Context:
                         "• [bold cyan]/run [url] [flags][/bold cyan] — Launch a real chaos attack (same flags as `loki run`), without leaving chat\n"
                         "• [bold cyan]/fix [run_id] [--apply][/bold cyan] — Diagnose (and optionally patch) the latest or a specific incident\n"
                         "• [bold cyan]/report [run_id][/bold cyan] — Open or generate a run's HTML report\n"
+                        "  [dim]/run, /fix and /report take the same flags as the CLI — add --help to list them[/dim]\n"
                         "• [bold cyan]/model[/bold cyan] — View, switch, or add AI models (e.g. /model add local ollama/llama3)\n"
                         "• [bold cyan]/runs[/bold cyan] — List recent test runs, crashes, and report files\n"
                         "• [bold cyan]/rules[/bold cyan] — Display active business rules from .loki/rules.md\n"
@@ -746,16 +582,12 @@ Project & Testing Context:
                 self._handle_model_command(user_input[len("/model"):].strip())
                 continue
 
-            if cmd_lower == "/run" or cmd_lower.startswith("/run "):
-                self._handle_run_command(user_input[len("/run"):].strip())
-                continue
-
-            if cmd_lower == "/fix" or cmd_lower.startswith("/fix "):
-                self._handle_fix_command(user_input[len("/fix"):].strip())
-                continue
-
-            if cmd_lower == "/report" or cmd_lower.startswith("/report "):
-                self._handle_report_command(user_input[len("/report"):].strip())
+            cli_command = next(
+                (c for c in CLI_SLASH_COMMANDS if cmd_lower == f"/{c}" or cmd_lower.startswith(f"/{c} ")),
+                None,
+            )
+            if cli_command:
+                self._invoke_cli_command(cli_command, user_input[len(cli_command) + 1:].strip())
                 continue
 
             if cmd_lower == "/runs":
