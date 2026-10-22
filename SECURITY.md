@@ -6,10 +6,14 @@ This document defines the security architecture, vulnerability disclosure guidel
 
 ## 1. Supported Versions
 
-Security fixes and patches are applied to the active development branch and latest release series:
+Security fixes and patches are applied to the active development branch (`main`) and the **latest release**. Older releases do not receive fixes; upgrade to the latest version (`loki update`).
 
 | Version | Supported |
 |:---|:---:|
+| Latest release / `main` | ✅ Supported |
+| Any older release | ❌ End of Life |
+
+---|:---:|
 | `v1.10.x` (`main`) | ✅ Supported |
 | `< v1.10.0` | ❌ End of Life |
 
