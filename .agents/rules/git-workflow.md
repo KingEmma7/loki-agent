@@ -1,8 +1,8 @@
 # Git & Version Control Protocol (`git-workflow.md`)
 
-## 1. Commit & Push Cadence
-- **Atomic Milestones**: Stage, commit, and push changes to GitHub (`origin/main`) immediately after completing and verifying each discrete feature, bug fix, or milestone.
-- **Never Leave Work Stale**: Do not accumulate multiple unrelated features in a single uncommitted batch.
+## 1. Commit & Push Policy
+- **Explicit User Approval Required**: **NEVER commit or push changes to GitHub (`git commit`, `git push`) unless the user explicitly instructs you to do so.**
+- **Atomic Milestones (When Instructed)**: Keep commits logically scoped and verified before pushing when requested by the user.
 
 ## 2. Command Execution in Windows PowerShell
 - **Command Chaining**: In Windows PowerShell, NEVER use `&&` as a command separator. Always use `;` to chain commands:

@@ -20,7 +20,7 @@ Every AI agent interacting with this repository MUST adhere to these non-negotia
 | Category | Invariant Rule | Details / Rationale |
 | :--- | :--- | :--- |
 | **Language** | **Dual-Language Policy** | **User conversation:** Spanish (when requested by maintainer).<br>**Repository Artifacts:** **100% English** (code, docstrings, variable names, CLI output, commits, docs). |
-| **Git Protocol** | **Atomic Cadence** | Commit and push to GitHub (`git add . ; git commit -m "..." ; git push`) after **every** verified milestone. |
+| **Git Protocol** | **Explicit User Approval Only** | **NEVER commit or push to GitHub (`git commit`, `git push`) unless the user explicitly instructs you to do so.** |
 | **PowerShell** | **Semicolon Chaining** | In Windows PowerShell, **NEVER use `&&`**; ALWAYS use `;` as command separator. |
 | **Code Edits** | **Surgical Modifications** | Use targeted chunk replacements (`replace_file_content`). Never rewrite entire files for minor changes. |
 | **Encoding** | **UTF-8 Output Stream** | Ensure `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` to prevent Windows `charmap` codec crashes. |
@@ -64,7 +64,7 @@ On-demand procedures and runbooks are organized under `.agents/skills/` with pro
 ## 5. Modular Workspace Rules (`.agents/rules/`)
 
 - [**`coding-standards.md`**](.agents/rules/coding-standards.md): Python 3.10+ types, PEP 8, Typer CLI patterns, Playwright safety, and UTF-8 encoding.
-- [**`git-workflow.md`**](.agents/rules/git-workflow.md): Semantic commit conventions, PowerShell `;` chaining, atomic push cadence, and gitignore hygiene.
+- [**`git-workflow.md`**](.agents/rules/git-workflow.md): Semantic commit conventions, PowerShell `;` chaining, explicit user approval for Git pushes, and gitignore hygiene.
 - [**`security-privacy.md`**](.agents/rules/security-privacy.md): Network HAR token scrubbing, credential masking in journeys, and sandbox isolation (canonically enforced in [**`SECURITY.md`**](./SECURITY.md)).
 - [**`language-policy.md`**](.agents/rules/language-policy.md): Conversational Spanish vs 100% English code, docs, and git commits.
 
@@ -151,4 +151,4 @@ Before running `git commit`, every agent MUST verify:
 2. If touching sandbox or personas: run against local target (`http://localhost:8000`) and ensure no CLI crash.
 3. If touching AI brain: verify graceful fallback when API keys are absent (`SKIPPED` status).
 4. No temp files, `.loki.bak` backups, or `.loki/runs/` staged in Git.
-5. Push to GitHub (`git add . ; git commit -m "..." ; git push`) using PowerShell `;` syntax.
+5. **Only when explicitly requested by the user**, commit and push to GitHub (`git add . ; git commit -m "..." ; git push`) using PowerShell `;` syntax.
