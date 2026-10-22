@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-LOKI Agent — Optimized PyInstaller Specification File (loki.spec)
+LOKI Chaos — Optimized PyInstaller Specification File (loki.spec)
 
 Optimizes standalone executable footprint, compilation duration, and startup speed:
 1. Prunes `litellm.proxy` (~50MB of Next.js frontend chunks, Prisma schemas, FastAPI proxy routes).

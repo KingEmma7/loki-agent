@@ -16,7 +16,7 @@
   #define MySourceExe "..\dist\loki.exe"
 #endif
 
-#define MyAppName "LOKI Chaos Agent"
+#define MyAppName "LOKI Chaos"
 #define MyAppPublisher "Elabsurdo984"
 #define MyAppURL "https://github.com/Elabsurdo984/loki-agent"
 #define MyAppExeName "loki.exe"
@@ -56,7 +56,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Tasks]
 Name: "addtopath"; Description: "Add LOKI to your PATH environment variable (run 'loki' from any terminal)"; GroupDescription: "System & Shell Integration:"
-Name: "contextmenu"; Description: "Add ""Open LOKI Agent here"" to folder right-click context menu"; GroupDescription: "System & Shell Integration:"
+Name: "contextmenu"; Description: "Add ""Open LOKI Chaos here"" to folder right-click context menu"; GroupDescription: "System & Shell Integration:"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon} (launches LOKI Interactive Chat)"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "installchromium"; Description: "Download and configure Playwright Chromium browser engine during installation"; GroupDescription: "Browser Engine Setup:"; Flags: unchecked
 
@@ -69,13 +69,13 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Paramete
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "chat"; IconFilename: "{app}\logo.ico"; Tasks: desktopicon; Comment: "Launch LOKI Conversational QA & Chaos Testing Terminal"
 
 [Registry]
-; Right-click inside a folder background -> "Open LOKI Agent here"
-Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\LOKI"; ValueType: string; ValueName: ""; ValueData: "Open LOKI Agent here"; Flags: uninsdeletekey; Tasks: contextmenu
+; Right-click inside a folder background -> "Open LOKI Chaos here"
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\LOKI"; ValueType: string; ValueName: ""; ValueData: "Open LOKI Chaos here"; Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\LOKI"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"""; Tasks: contextmenu
 Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\LOKI\command"; ValueType: string; ValueName: ""; ValueData: "cmd.exe /s /k ""pushd ""%V"" & ""{app}\{#MyAppExeName}"" chat"""; Tasks: contextmenu
 
-; Right-click on a folder icon -> "Open LOKI Agent here"
-Root: HKA; Subkey: "Software\Classes\Directory\shell\LOKI"; ValueType: string; ValueName: ""; ValueData: "Open LOKI Agent here"; Flags: uninsdeletekey; Tasks: contextmenu
+; Right-click on a folder icon -> "Open LOKI Chaos here"
+Root: HKA; Subkey: "Software\Classes\Directory\shell\LOKI"; ValueType: string; ValueName: ""; ValueData: "Open LOKI Chaos here"; Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKA; Subkey: "Software\Classes\Directory\shell\LOKI"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"""; Tasks: contextmenu
 Root: HKA; Subkey: "Software\Classes\Directory\shell\LOKI\command"; ValueType: string; ValueName: ""; ValueData: "cmd.exe /s /k ""pushd ""%V"" & ""{app}\{#MyAppExeName}"" chat"""; Tasks: contextmenu
 

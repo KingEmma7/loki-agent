@@ -57,7 +57,7 @@ from loki.safety import (
 console = Console()
 app = typer.Typer(
     name="loki",
-    help="⚡ LOKI: Synthetic Chaos & Exploratory AI Testing Agent",
+    help="⚡ LOKI Chaos: Synthetic Chaos & Exploratory AI Testing Agent",
     add_completion=False,
 )
 auth_app = typer.Typer(help="Manage which non-local hosts LOKI is authorized to attack.")
@@ -281,7 +281,7 @@ def version(
     check: bool = typer.Option(False, "--check", "-c", help="Check if a newer version is available on GitHub"),
 ):
     """Display the installed version of Loki."""
-    console.print(f"[bold yellow]LOKI Agent[/bold yellow] version [bold green]{__version__}[/bold green]")
+    console.print(f"[bold yellow]LOKI Chaos[/bold yellow] version [bold green]{__version__}[/bold green]")
     if check:
         from loki.engine.updater import check_for_updates, print_update_banner
         with Status("[bold yellow]Checking for updates on GitHub...[/bold yellow]", console=console):
@@ -343,7 +343,7 @@ def init(
     target_url: str = typer.Option("http://localhost:8000", "--url", "-u", help="Default target URL for this repository"),
 ):
     """Scan the repository and initialize LOKI configuration and business rules."""
-    console.print("[bold cyan]⚡ Initializing LOKI Agent in current workspace...[/bold cyan]\n")
+    console.print("[bold cyan]⚡ Initializing LOKI Chaos in current workspace...[/bold cyan]\n")
 
     scanner = ProjectScanner()
 

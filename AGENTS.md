@@ -1,4 +1,4 @@
-# LOKI Agent — Autonomous AI Developer & Agent Operating Manual (`AGENTS.md`)
+# LOKI Chaos — Autonomous AI Developer & Agent Operating Manual (`AGENTS.md`)
 
 This document serves as the canonical operating constitution and architectural specification for any AI agent (Antigravity, Claude Code, Cursor, Copilot, Windsurf, or autonomous coding agents) operating in this repository.
 
@@ -6,7 +6,7 @@ This document serves as the canonical operating constitution and architectural s
 
 ## 1. Project Identity & Architecture
 
-- **Name**: **LOKI** (Synthetic Chaos & Exploratory AI Testing Agent)
+- **Name**: **LOKI Chaos** (Synthetic Chaos & Exploratory AI Testing Agent)
 - **Nature**: Standalone CLI Application / Autonomous Testing Agent (similar to `docker`, `terraform`, or `gh`). **It is NOT an importable Python library**.
 - **Mission**: Automate dynamic black-box/gray-box chaos testing, visual workflow recording, AI-driven root cause diagnosis, deterministic reproduction, and natural language business rules enforcement (`rules.md`).
 - **Target Platform**: Windows 11 / Linux AMD64 / macOS ARM64. Primary development environment: Windows PowerShell with Python 3.10+.

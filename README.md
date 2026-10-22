@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="LOKI Logo" width="180" />
 </p>
 
-<h1 align="center">LOKI</h1>
+<h1 align="center">LOKI Chaos</h1>
 
 <p align="center">
   <strong>Autonomous AI Testing & Synthetic Chaos Agent</strong>
@@ -20,7 +20,7 @@
 
 ## ⚡ Overview
 
-**LOKI** is an autonomous CLI testing agent designed to break, explore, and verify modern web applications before your users do. Operating as a standalone developer tool (similar to `docker`, `terraform`, or `gh`), LOKI combines **synthetic chaos personas**, **automated visual recording**, **AI business rule verification**, and **forensic network analysis** into an end-to-end quality gate.
+**LOKI Chaos** (CLI command: `loki`) is an autonomous CLI testing agent designed to break, explore, and verify modern web applications before your users do. Operating as a standalone developer tool (similar to `docker`, `terraform`, or `gh`), LOKI combines **synthetic chaos personas**, **automated visual recording**, **AI business rule verification**, and **forensic network analysis** into an end-to-end quality gate.
 
 Unlike traditional testing frameworks that test for "happy paths", LOKI deliberately injects chaos: race conditions, input fuzzing, network drops, and security tampering. When a failure is detected, LOKI packages the incident into a deterministic reproduction script, video replay, and standalone HTML scorecard.
 
@@ -87,7 +87,7 @@ At the end of an assault session, LOKI's AI Brain (model set in `.loki/config.ya
 
 #### Option A: Standalone Precompiled Binaries & Windows Installer (Zero Python Required)
 Download the installer or standalone executable directly from [GitHub Releases](https://github.com/Elabsurdo984/loki-agent/releases):
-* **Windows Installer (Recommended)**: `loki-setup-windows-amd64.exe` *(Interactive wizard with custom installation path, automatic `PATH` configuration, desktop/Start Menu shortcuts, folder right-click `"Open LOKI Agent here"`, and optional Playwright Chromium setup)*
+* **Windows Installer (Recommended)**: `loki-setup-windows-amd64.exe` *(Interactive wizard with custom installation path, automatic `PATH` configuration, desktop/Start Menu shortcuts, folder right-click `"Open LOKI Chaos here"`, and optional Playwright Chromium setup)*
 * **Windows Portable**: `loki-windows-amd64.exe`
 * **Linux**: `loki-linux-amd64`
 * **macOS (Apple Silicon)**: `loki-macos-arm64`
