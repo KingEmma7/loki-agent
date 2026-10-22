@@ -13,10 +13,7 @@ Security fixes and patches are applied to the active development branch (`main`)
 | Latest release / `main` | ✅ Supported |
 | Any older release | ❌ End of Life |
 
----|:---:|
-| `v1.10.x` (`main`) | ✅ Supported |
-| `< v1.10.0` | ❌ End of Life |
-
+---
 ---
 
 ## 2. Reporting a Vulnerability
