@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from playwright.sync_api import sync_playwright, Page, BrowserContext
-from loki.engine.browser import launch_browser, normalize_browser_name
+from loki.engine.browser import ensure_browsers_path, launch_browser, normalize_browser_name
 
 
 class JourneyRecorder:
@@ -28,6 +28,7 @@ class JourneyRecorder:
     def record_journey(self, start_url: str, journey_name: str, browser_name: str = "chromium") -> Path:
         """Launches an interactive browser session and logs user clicks and inputs."""
         self.recorded_events.clear()
+        ensure_browsers_path()
         with sync_playwright() as p:
             # Launch in visible headed mode for the human operator
             browser = launch_browser(p, normalize_browser_name(browser_name), headless=False)

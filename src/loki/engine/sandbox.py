@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from typing import Any
 from playwright.sync_api import sync_playwright, Page, Response, Error
-from loki.engine.browser import launch_browser, normalize_browser_name
+from loki.engine.browser import ensure_browsers_path, launch_browser, normalize_browser_name
 from loki.engine.detectors import Detector, capture_dom_snapshot, default_detectors
 from loki.engine.devices import resolve_device
 from loki.models import IncidentReport
@@ -96,6 +96,7 @@ class ChaosSandbox:
         start_time = time.time()
         temp_har_file = self.output_dir / f"temp_network_{int(start_time)}.har"
 
+        ensure_browsers_path()
         with sync_playwright() as p:
             report.device_requested = device_name
             report.device_name, device_config = resolve_device(
@@ -174,6 +175,7 @@ class ChaosSandbox:
             "lane": lane, "selector": selector, "crashes": [], "responses": [], "final_text": None,
         }
         try:
+            ensure_browsers_path()
             with sync_playwright() as p:
                 browser = launch_browser(p, self.browser_name, self.headless)
                 context = browser.new_context(**(device_config or {}))
@@ -266,6 +268,7 @@ class ChaosSandbox:
         )
         start_time = time.time()
 
+        ensure_browsers_path()
         with sync_playwright() as p:
             resolved_device_name, device_config = resolve_device(device_name=device_name, orientation=orientation, devices=p.devices)
             report.device_requested = device_name
