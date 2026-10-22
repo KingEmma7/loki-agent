@@ -1,0 +1,57 @@
+import pytest
+from typer.testing import CliRunner
+
+from loki import cli
+from loki.cli import app
+from loki.services.run import RunSetupError
+
+
+@pytest.fixture
+def captured(monkeypatch):
+    """Replaces prepare_run so no browser starts; records the options it was given."""
+    seen = {}
+
+    def capture_and_stop(options):
+        seen["options"] = options
+        raise RunSetupError("stop before launching a browser")
+
+    monkeypatch.setattr(cli, "prepare_run", capture_and_stop)
+    return seen
+
+
+def _invoke(*args):
+    runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"})
+    return runner.invoke(app, ["run", "http://localhost:8000", *args])
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_run_rejects_duration_below_one(captured, value):
+    result = _invoke("--duration", value)
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert "options" not in captured
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.5", "42"])
+def test_run_rejects_fault_rate_outside_probability_range(captured, value):
+    result = _invoke("--fault-rate", value)
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert "options" not in captured
+
+
+@pytest.mark.parametrize(
+    ("args", "duration", "fault_rate"),
+    [
+        (["--duration", "1", "--fault-rate", "0"], 1, 0.0),
+        (["--duration", "30", "--fault-rate", "0.65"], 30, 0.65),
+        (["--fault-rate", "1"], None, 1.0),
+        ([], None, None),
+    ],
+)
+def test_run_accepts_valid_duration_and_fault_rate(captured, args, duration, fault_rate):
+    result = _invoke(*args)
+    # prepare_run is stubbed to stop with exit code 1, after the arguments were parsed.
+    assert result.exit_code == 1
+    assert captured["options"].duration == duration
+    assert captured["options"].fault_rate == fault_rate
