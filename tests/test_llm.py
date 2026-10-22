@@ -113,3 +113,55 @@ def test_open_stream_all_transient_is_unavailable(default_connection, monkeypatc
     _fake_completion(monkeypatch, [RuntimeError("timeout")] * 4)
     with pytest.raises(llm.LLMUnavailableError):
         llm.open_stream([])
+
+
+def test_summarize_rate_limit_strips_json_payload():
+    raw = (
+        'litellm.RateLimitError: litellm.RateLimitError: geminiException - {\n'
+        '  "error": {\n'
+        '    "code": 429,\n'
+        '    "message": "You exceeded your current quota for gemini-3.8-flash. '
+        'Please retry in 6h22m8.9s.",\n'
+        '    "status": "RESOURCE_EXHAUSTED",\n'
+        '    "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure"}]\n'
+        "  }\n"
+        "}"
+    )
+    err = type("RateLimitError", (Exception,), {})(raw)
+    summary = llm.summarize_llm_error(err)
+    assert "429" in summary
+    assert "{" not in summary
+    assert "RESOURCE_EXHAUSTED" not in summary
+    assert "retry in ~6h" in summary
+    assert llm.is_rate_limit_error(err) is True
+
+
+def test_summarize_missing_api_key():
+    err = RuntimeError("401 invalid api key for openai")
+    summary = llm.summarize_llm_error(err)
+    assert "Authentication" in summary or "authentication" in summary.lower()
+    assert "{" not in summary
+    assert llm.is_rate_limit_error(err) is False
+
+
+def test_summarize_timeout():
+    err = TimeoutError("Request timed out after 25s connecting to api.example.com")
+    summary = llm.summarize_llm_error(err)
+    assert "Connection" in summary or "timeout" in summary.lower()
+    assert "{" not in summary
+
+
+def test_complete_raises_concise_llm_error(custom_connection, monkeypatch):
+    raw = (
+        'RateLimitError: geminiException - {"error": {"code": 429, '
+        '"message": "You exceeded your current quota. Please retry in 1h5m", '
+        '"status": "RESOURCE_EXHAUSTED"}}'
+    )
+    cause = type("RateLimitError", (Exception,), {})(raw)
+    _fake_completion(monkeypatch, [cause])
+    with pytest.raises(llm.LLMError) as exc:
+        llm.complete("hi")
+    assert exc.value.last_error is cause
+    assert exc.value.is_rate_limit is True
+    assert "{" not in str(exc.value)
+    assert "429" in str(exc.value)

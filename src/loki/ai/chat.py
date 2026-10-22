@@ -626,8 +626,10 @@ Project & Testing Context:
                 success = True
             except llm.LLMUnavailableError:
                 self.console.print("\n[bold red]AI Error:[/bold red] Service currently experiencing high demand. Please try again in a moment.")
-            except Exception as e:
+            except llm.LLMError as e:
                 self.console.print(f"\n[bold red]AI Error:[/bold red] {e}")
+            except Exception as e:
+                self.console.print(f"\n[bold red]AI Error:[/bold red] {llm.summarize_llm_error(e)}")
 
             if not success and self.history and self.history[-1].get("role") == "user":
                 self.history.pop()
