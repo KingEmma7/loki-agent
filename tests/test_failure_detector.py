@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
-from loki.engine.sandbox import ChaosSandbox
+from loki.engine.detectors import sniff_broken_resources, sniff_error_page
 from loki.models import IncidentReport
 from loki.engine.reporter import IncidentReporter
 from loki.engine.html_reporter import HTMLReporter
@@ -52,44 +52,41 @@ def test_incident_report_has_crashes_flags_all_failure_vectors():
 
 
 def test_sniff_error_page_detection():
-    sandbox = ChaosSandbox()
-
     mock_page = MagicMock()
     mock_page.is_closed.return_value = False
 
     # Title detection
     mock_page.title.return_value = "500 Internal Server Error"
     mock_page.url = "http://localhost:8000/dashboard"
-    result = sandbox._sniff_error_page(mock_page)
+    result = sniff_error_page(mock_page)
     assert result is not None
     assert "Application error page detected by title" in result
 
     # 404 title
     mock_page.title.return_value = "Page Not Found | MyApp"
-    result = sandbox._sniff_error_page(mock_page)
+    result = sniff_error_page(mock_page)
     assert result is not None
     assert "Application error page detected by title" in result
 
     # URL path detection
     mock_page.title.return_value = "Welcome"
     mock_page.url = "http://localhost:8000/crash"
-    result = sandbox._sniff_error_page(mock_page)
+    result = sniff_error_page(mock_page)
     assert result is not None
     assert "Application navigated to error route" in result
 
     # Clean page
     mock_page.title.return_value = "Home Dashboard"
     mock_page.url = "http://localhost:8000/home"
-    assert sandbox._sniff_error_page(mock_page) is None
+    assert sniff_error_page(mock_page) is None
 
 
 def test_sniff_broken_resources_mock():
-    sandbox = ChaosSandbox()
     mock_page = MagicMock()
     mock_page.is_closed.return_value = False
     mock_page.evaluate.return_value = ["http://localhost:8000/broken.jpg"]
 
-    issues = sandbox._sniff_broken_resources(mock_page)
+    issues = sniff_broken_resources(mock_page)
     assert len(issues) == 1
     assert "Broken image in DOM (0px natural width): http://localhost:8000/broken.jpg" in issues[0]
 

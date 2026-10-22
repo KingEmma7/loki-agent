@@ -3,84 +3,11 @@ import time
 from pathlib import Path
 from typing import Any
 from playwright.sync_api import sync_playwright, Page, Response, Error
+from loki.engine.browser import launch_browser, normalize_browser_name
+from loki.engine.detectors import Detector, capture_dom_snapshot, default_detectors
+from loki.engine.devices import resolve_device
 from loki.models import IncidentReport
 from loki.personas.base import BasePersona
-
-
-def resolve_device(
-    device_name: str | None,
-    orientation: str = "portrait",
-    devices: dict | None = None,
-) -> tuple[str | None, dict | None]:
-    """Resolves friendly device aliases (e.g. 'iphone-15', 'pixel-7') to Playwright device descriptors."""
-    if not device_name or not devices:
-        return None, None
-
-    clean_name = device_name.strip()
-    is_landscape = orientation.lower() == "landscape"
-
-    alias_map = {
-        "iphone": "iPhone 17",
-        "iphone-15": "iPhone 15",
-        "iphone15": "iPhone 15",
-        "iphone-15-pro": "iPhone 15 Pro",
-        "iphone-16": "iPhone 16",
-        "iphone16": "iPhone 16",
-        "iphone-16-pro": "iPhone 16 Pro",
-        "iphone16pro": "iPhone 16 Pro",
-        "iphone-17": "iPhone 17",
-        "iphone17": "iPhone 17",
-        "iphone-17-pro": "iPhone 17 Pro",
-        "iphone17pro": "iPhone 17 Pro",
-        "iphone-14": "iPhone 14",
-        "iphone14": "iPhone 14",
-        "iphone-13": "iPhone 13",
-        "iphone13": "iPhone 13",
-        "iphone-se": "iPhone SE",
-        "pixel": "Pixel 10",
-        "pixel-7": "Pixel 7",
-        "pixel7": "Pixel 7",
-        "pixel-8": "Pixel 8",
-        "pixel-9": "Pixel 9",
-        "pixel-10": "Pixel 10",
-        "pixel10": "Pixel 10",
-        "ipad": "iPad Pro 11",
-        "ipad-pro": "iPad Pro 11",
-        "ipad-mini": "iPad Mini",
-        "galaxy-s24": "Galaxy S24",
-        "galaxy-z-fold-7": "Galaxy Z Fold 7",
-        "galaxy-z-flip-7": "Galaxy Z Flip 7",
-        "galaxy": "Galaxy S24",
-    }
-
-    target = alias_map.get(clean_name.lower(), clean_name)
-
-    # Check for landscape variant directly in devices catalog
-    if is_landscape:
-        landscape_candidate = f"{target} landscape"
-        if landscape_candidate in devices:
-            return landscape_candidate, dict(devices[landscape_candidate])
-
-    # Direct match in devices catalog
-    if target in devices:
-        desc = dict(devices[target])
-        if is_landscape and "viewport" in desc:
-            vp = desc["viewport"]
-            desc["viewport"] = {
-                "width": max(vp["width"], vp["height"]),
-                "height": min(vp["width"], vp["height"]),
-            }
-        return target, desc
-
-    # Case-insensitive substring lookup
-    for key, val in devices.items():
-        if target.lower() in key.lower():
-            if is_landscape and "landscape" in key.lower():
-                return key, dict(val)
-            elif not is_landscape and "landscape" not in key.lower():
-                return key, dict(val)
-
-    return None, None
 
 
 class ChaosSandbox:
@@ -90,94 +17,60 @@ class ChaosSandbox:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.headless = headless
-        self.browser_name = (browser_name or "chromium").lower().strip()
-        if self.browser_name not in ("chromium", "firefox", "webkit"):
-            self.browser_name = "chromium"
+        self.browser_name = normalize_browser_name(browser_name)
         self.seed = seed
 
-    def _sniff_mobile_layout(self, page: Page) -> list[str]:
-        """Sniffs for mobile responsiveness issues such as horizontal scroll overflows and missing viewport meta tags."""
-        try:
-            if page.is_closed():
-                return []
-            vp = page.viewport_size
-            vp_width = vp["width"] if vp else 390
-            return page.evaluate("""(vpWidth) => {
-                const issues = [];
-                const docWidth = Math.max(
-                    document.documentElement.scrollWidth || 0,
-                    document.body ? document.body.scrollWidth : 0
-                );
+    def _context_options(self, device_config: dict | None, har_file: Path) -> dict[str, Any]:
+        """Browser context with video + HAR recording, emulating the device if one was resolved."""
+        options: dict[str, Any] = {
+            "record_video_dir": str(self.output_dir / "videos"),
+            "record_har_path": str(har_file),
+        }
+        if device_config:
+            options.update(device_config)
+            if "viewport" in device_config:
+                options["record_video_size"] = device_config["viewport"]
+        else:
+            options["record_video_size"] = {"width": 1280, "height": 720}
+        return options
 
-                // Detect horizontal overflow (standard mobile UX bug)
-                if (docWidth > vpWidth + 5) {
-                    issues.push(`Horizontal scroll overflow detected: page content (${docWidth}px) exceeds mobile viewport width (${vpWidth}px) by ${docWidth - vpWidth}px.`);
-                }
+    @staticmethod
+    def _drive(
+        page: Page,
+        report: IncidentReport,
+        persona: BasePersona | None,
+        journey_data: dict | None,
+        duration: int,
+    ) -> list[dict[str, Any]]:
+        """Runs the guided journey or the persona's free-form attack; returns the replay trace."""
+        trace: list[dict[str, Any]] = []
+        if journey_data and journey_data.get("steps"):
+            report.actions_taken.append(f"Started guided journey: '{journey_data.get('name')}'")
+            for step in journey_data["steps"]:
+                if persona:
+                    persona.attack_step(page=page, step=step)
+                    trace.extend(persona.trace)
+                    persona.trace.clear()
+                else:
+                    selector = step.get("selector")
+                    if step.get("action") == "click" and selector:
+                        page.click(selector, timeout=2000)
+                        trace.append({"kind": "click", "selector": selector})
+                    elif step.get("action") == "input" and selector:
+                        value = step.get("value", "")
+                        page.fill(selector, value)
+                        trace.append({"kind": "fill", "selector": selector, "value": value})
+                time.sleep(0.2)
 
-                // Detect missing or invalid viewport meta tag
-                const metaViewport = document.querySelector('meta[name="viewport"]');
-                if (!metaViewport) {
-                    issues.push("Missing <meta name='viewport'> tag: mobile devices will render unoptimized scaled desktop view.");
-                } else {
-                    const content = metaViewport.getAttribute('content') || '';
-                    if (!content.includes('width=device-width')) {
-                        issues.push("<meta name='viewport'> tag missing 'width=device-width' directive.");
-                    }
-                }
-
-                return issues;
-            }""", vp_width)
-        except Exception:
-            return []
-
-    def _sniff_error_page(self, page: Page) -> str | None:
-        """Sniffs whether the current page has navigated into a known error screen or crash route."""
-        try:
-            if page.is_closed():
-                return None
-            title = (page.title() or "").lower()
-            url = page.url or ""
-            error_title_keywords = [
-                "500 internal server error",
-                "404 not found",
-                "page not found",
-                "server error",
-                "application error",
-                "error 404",
-                "502 bad gateway",
-                "503 service unavailable",
-                "504 gateway timeout",
-                "something went wrong",
-            ]
-            if any(kw in title for kw in error_title_keywords):
-                return f"Application error page detected by title: '{page.title()}' ({url})"
-
-            from urllib.parse import urlparse
-            path = urlparse(url).path.lower().rstrip("/")
-            error_url_patterns = ["/500", "/404", "/error", "/crash", "/oops", "/server-error", "/page-not-found"]
-            if any(path.endswith(p) or path == p for p in error_url_patterns):
-                return f"Application navigated to error route: '{path}' ({url})"
-        except Exception:
-            pass
-        return None
-
-    def _sniff_broken_resources(self, page: Page) -> list[str]:
-        """Sniffs the DOM for completed <img> tags that failed to load (naturalWidth === 0)."""
-        try:
-            if page.is_closed():
-                return []
-            broken = page.evaluate("""() => {
-                const results = [];
-                document.querySelectorAll('img').forEach(img => {
-                    if (img.complete && img.naturalWidth === 0 && img.src && !img.src.startsWith('data:')) {
-                        results.push(img.src);
-                    }
-                });
-                return results;
-            }""")
-            return [f"Broken image in DOM (0px natural width): {src}" for src in broken]
-        except Exception:
-            return []
+            if persona:
+                report.actions_taken.extend(persona.actions_log)
+        elif persona:
+            persona.attack(page=page, duration=duration)
+            report.actions_taken = persona.actions_log
+            trace.extend(persona.trace)
+        else:
+            time.sleep(duration)
+        return trace
 
     def run_session(
         self,
@@ -187,6 +80,7 @@ class ChaosSandbox:
         journey_data: dict | None = None,
         device_name: str | None = None,
         orientation: str = "portrait",
+        detectors: list[Detector] | None = None,
     ) -> IncidentReport:
         """Launches the target URL, applies chaotic attacks, and records evidence."""
         effective_seed = self.seed if self.seed is not None else (getattr(persona, "seed", None) if persona else None)
@@ -197,241 +91,52 @@ class ChaosSandbox:
             browser_name=self.browser_name,
             seed=effective_seed,
         )
+        if detectors is None:
+            detectors = default_detectors(persona)
         start_time = time.time()
         temp_har_file = self.output_dir / f"temp_network_{int(start_time)}.har"
 
         with sync_playwright() as p:
-            resolved_device_name, device_config = resolve_device(
+            report.device_requested = device_name
+            report.device_name, device_config = resolve_device(
                 device_name=device_name,
                 orientation=orientation,
                 devices=p.devices,
             )
-            report.device_requested = device_name
-            report.device_name = resolved_device_name
 
-            browser_type = getattr(p, self.browser_name)
-            try:
-                browser = browser_type.launch(headless=self.headless)
-            except Error as e:
-                err_msg = str(e).lower()
-                if "executable doesn't exist" in err_msg or "playwright install" in err_msg:
-                    import subprocess
-                    import sys
-                    from rich.console import Console
-                    Console().print(f"[bold yellow]⚡ {self.browser_name.capitalize()} browser not found. Installing automatically via Playwright...[/bold yellow]")
-                    subprocess.run([sys.executable, "-m", "playwright", "install", self.browser_name], check=True)
-                    browser = browser_type.launch(headless=self.headless)
-                else:
-                    raise e
-
-            context_kwargs = {
-                "record_video_dir": str(self.output_dir / "videos"),
-                "record_har_path": str(temp_har_file),
-            }
-            if device_config:
-                context_kwargs.update(device_config)
-                if "viewport" in device_config:
-                    context_kwargs["record_video_size"] = device_config["viewport"]
-            else:
-                context_kwargs["record_video_size"] = {"width": 1280, "height": 720}
-
-            context = browser.new_context(**context_kwargs)
+            browser = launch_browser(p, self.browser_name, self.headless)
+            context = browser.new_context(**self._context_options(device_config, temp_har_file))
             page: Page = context.new_page()
-
-            # 1. Listen for unhandled JavaScript exceptions
-            page.on("pageerror", lambda err: report.crashes.append(str(err)))
-
-            # 2. Listen for console error messages
-            page.on(
-                "console",
-                lambda msg: report.console_errors.append(msg.text)
-                if msg.type == "error"
-                else None,
-            )
-
-            # 3. Listen for HTTP response errors (status >= 400 covers unexpected 4xx client and 5xx server errors)
-            def handle_response(response: Response):
-                if response.status >= 400:
-                    status_text = response.status_text or ""
-                    suffix = f" ({status_text})" if status_text else ""
-                    report.http_errors.append(
-                        f"HTTP {response.status}{suffix} on {response.url}"
-                    )
-
-            page.on("response", handle_response)
-
-            # 4. Listen for failed requests (CORS failures, dead endpoints, connection drops)
-            def handle_request_failed(request):
-                failure = request.failure or "Request failed"
-                desc = f"[{request.method}] {request.url} ({request.resource_type}) - {failure}"
-                if desc not in report.failed_requests:
-                    report.failed_requests.append(desc)
-
-            page.on("requestfailed", handle_request_failed)
-
-            # 5. Listen for unexpected dialogs (alert, confirm, prompt)
-            def handle_dialog(dialog):
-                msg = f"Unexpected {dialog.type} dialog: '{dialog.message}'"
-                if msg not in report.unexpected_dialogs:
-                    report.unexpected_dialogs.append(msg)
-                try:
-                    dialog.dismiss()
-                except Exception:
-                    pass
-
-            page.on("dialog", handle_dialog)
-
-            # 6. Listen for browser error page navigations
-            def handle_framenavigated(frame):
-                if frame == page.main_frame:
-                    url = frame.url or ""
-                    if url.startswith("chrome-error://") or "about:neterror" in url or url.startswith("about:crash"):
-                        msg = f"Navigated to browser error page: {url}"
-                        if msg not in report.navigation_errors:
-                            report.navigation_errors.append(msg)
-
-            page.on("framenavigated", handle_framenavigated)
-
-            # 7. Expose bindings for unhandled promise rejections and DOM resource load failures
-            def record_unhandled_rejection(source, reason_str: str):
-                msg = f"Unhandled Promise Rejection: {reason_str}"
-                if msg not in report.unhandled_rejections:
-                    report.unhandled_rejections.append(msg)
-
-            def record_resource_failure(source, tag: str, src: str):
-                msg = f"Failed to load <{tag.upper()}> resource: {src}"
-                if msg not in report.resource_failures:
-                    report.resource_failures.append(msg)
-
-            page.expose_binding("__loki_record_rejection", record_unhandled_rejection)
-            page.expose_binding("__loki_record_resource_failure", record_resource_failure)
-
-            # 8. Add init script to capture unhandled promise rejections and non-bubbling resource errors
-            page.add_init_script("""
-                // Intercept unhandled promise rejections
-                window.addEventListener('unhandledrejection', function(event) {
-                    var reason = event.reason;
-                    var msg = '';
-                    if (reason instanceof Error) {
-                        msg = reason.stack || reason.message;
-                    } else if (typeof reason === 'object') {
-                        try { msg = JSON.stringify(reason); } catch(e) { msg = String(reason); }
-                    } else {
-                        msg = String(reason);
-                    }
-                    if (window.__loki_record_rejection) {
-                        window.__loki_record_rejection(msg);
-                    }
-                });
-
-                // Intercept resource load failures (<img>, <script>, <link>, etc.) in capture phase
-                window.addEventListener('error', function(event) {
-                    var target = event.target;
-                    if (target && target !== window && target.tagName) {
-                        var tag = target.tagName.toUpperCase();
-                        var src = target.src || target.href || target.currentSrc || '';
-                        if (src && window.__loki_record_resource_failure) {
-                            window.__loki_record_resource_failure(tag, src);
-                        }
-                    }
-                }, true);
-            """)
+            for detector in detectors:
+                detector.attach(page, report)
 
             try:
                 nav_res = page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
                 if nav_res and nav_res.status >= 400:
-                    status_text = nav_res.status_text or ""
-                    suffix = f" ({status_text})" if status_text else ""
+                    suffix = f" ({nav_res.status_text})" if nav_res.status_text else ""
                     report.navigation_errors.append(
                         f"Initial navigation returned HTTP {nav_res.status}{suffix}: {page.url}"
                     )
+                for detector in detectors:
+                    detector.after_navigation(page, report)
 
-                # Sniff initial mobile responsiveness if running under device emulation
-                if report.device_name:
-                    report.layout_issues.extend(self._sniff_mobile_layout(page))
-
-                # Guided journey execution
-                session_trace: list[dict[str, Any]] = []
-                if journey_data and journey_data.get("steps"):
-                    report.actions_taken.append(f"Started guided journey: '{journey_data.get('name')}'")
-                    for step in journey_data["steps"]:
-                        if persona:
-                            persona.attack_step(page=page, step=step)
-                            session_trace.extend(persona.trace)
-                            persona.trace.clear()
-                        else:
-                            selector = step.get("selector")
-                            if step.get("action") == "click" and selector:
-                                page.click(selector, timeout=2000)
-                                session_trace.append({"kind": "click", "selector": selector})
-                            elif step.get("action") == "input" and selector:
-                                value = step.get("value", "")
-                                page.fill(selector, value)
-                                session_trace.append({"kind": "fill", "selector": selector, "value": value})
-                        time.sleep(0.2)
-
-                    if persona:
-                        report.actions_taken.extend(persona.actions_log)
-                elif persona:
-                    persona.attack(page=page, duration=duration)
-                    report.actions_taken = persona.actions_log
-                    session_trace.extend(persona.trace)
-                else:
-                    time.sleep(duration)
-                report.replay_trace = session_trace
+                report.replay_trace = self._drive(page, report, persona, journey_data, duration)
                 if persona and hasattr(persona, "get_api_faults"):
                     report.api_faults = persona.get_api_faults()
 
             except Error as e:
                 report.crashes.append(f"Navigation error: {str(e)}")
             finally:
-                # Capture mobile layout state and concise UI state snapshot
-                try:
-                    if not page.is_closed():
-                        if report.device_name:
-                            for issue in self._sniff_mobile_layout(page):
-                                if issue not in report.layout_issues:
-                                    report.layout_issues.append(issue)
-
-                        # Sniff for UI freeze or blank screen after session disruptions
-                        if persona and hasattr(persona, "api_chaos"):
-                            freeze = persona.api_chaos.sniff_white_screen_or_freeze(page)
-                            if freeze:
-                                freeze_issue = f"[UI Freeze / Blank Screen] {freeze.get('reason', 'Application collapsed or became non-responsive')}"
-                                if freeze_issue not in report.layout_issues:
-                                    report.layout_issues.append(freeze_issue)
-
-                        # Sniff for broken resources in DOM (0px natural width images)
-                        for broken_res in self._sniff_broken_resources(page):
-                            if broken_res not in report.resource_failures:
-                                report.resource_failures.append(broken_res)
-
-                        # Sniff for error screens or crash routes
-                        err_page = self._sniff_error_page(page)
-                        if err_page and err_page not in report.navigation_errors:
-                            report.navigation_errors.append(err_page)
-                        dom_info = page.evaluate("""() => {
-                            const elements = [];
-                            document.querySelectorAll('button, input, select, a, .status, .alert, .badge, [role="alert"]').forEach(el => {
-                                elements.push({
-                                    tag: el.tagName.toLowerCase(),
-                                    id: el.id || undefined,
-                                    classes: el.className || undefined,
-                                    text: (el.innerText || el.value || '').trim(),
-                                    disabled: el.disabled !== undefined ? el.disabled : undefined,
-                                    visible: el.offsetParent !== null
-                                });
-                            });
-                            return {
-                                title: document.title,
-                                url: window.location.href,
-                                interactive_elements: elements
-                            };
-                        }""")
-                        import json
-                        report.dom_snapshot = json.dumps(dom_info, indent=2)
-                except Exception:
-                    pass
+                if not page.is_closed():
+                    for detector in detectors:
+                        try:
+                            detector.inspect(page, report)
+                        except Exception:
+                            pass
+                    try:
+                        report.dom_snapshot = capture_dom_snapshot(page)
+                    except Exception:
+                        pass
 
                 page.close()
                 video_obj = page.video
@@ -470,18 +175,7 @@ class ChaosSandbox:
         }
         try:
             with sync_playwright() as p:
-                browser_type = getattr(p, self.browser_name)
-                try:
-                    browser = browser_type.launch(headless=self.headless)
-                except Error as e:
-                    err_msg = str(e).lower()
-                    if "executable doesn't exist" in err_msg or "playwright install" in err_msg:
-                        import subprocess
-                        import sys
-                        subprocess.run([sys.executable, "-m", "playwright", "install", self.browser_name], check=True)
-                        browser = browser_type.launch(headless=self.headless)
-                    else:
-                        raise e
+                browser = launch_browser(p, self.browser_name, self.headless)
                 context = browser.new_context(**(device_config or {}))
                 page = context.new_page()
 
