@@ -1,6 +1,5 @@
 from enum import Enum
 from pathlib import Path
-import random
 import sys
 import typer
 import json
@@ -15,25 +14,37 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import webbrowser
 from loki import __version__
-from loki.config import load_loki_config, resolve_api_chaos_config
+from loki.config import load_loki_config
 from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
 from rich.table import Table
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
-from loki.engine.sandbox import ChaosSandbox
-from loki.engine.reporter import IncidentReporter
 from loki.engine.html_reporter import HTMLReporter
 from loki.engine.scanner import ProjectScanner
-from loki.personas.registry import API_CHAOS_PERSONAS, PersonaChoice, build_persona
+from loki.personas.registry import PersonaChoice
 from loki.ai.brain import AIBrain
 from loki.ai.chat import LokiChatSession
 from loki.engine.recorder import JourneyRecorder
 from loki.engine.replayer import IncidentReplayer
 from loki.engine.ci import CIGate
-from loki.engine.healer import CodeHealer
 from loki.engine import infra_chaos
+from loki.models import IncidentReport
+from loki.services.heal import HealError, HealingService
+from loki.services.run import (
+    RULES_FILE,
+    RunOptions,
+    RunPlan,
+    RunSetupError,
+    TargetNotAuthorizedError,
+    evaluate_rules,
+    gate_passed,
+    prepare_run,
+    run_attack,
+    save_artifacts,
+    write_ci_summary,
+)
 from loki.safety import (
     authorize_host,
     extract_host,
@@ -461,123 +472,121 @@ def run(
     if is_ci_mode:
         open_report = False
 
-    # 1. Load journey blueprint if specified
-    journey_data = None
-    if journey:
-        journey_path = Path(f".loki/journeys/{journey}.json" if not journey.endswith(".json") else f".loki/journeys/{journey}")
-        if not journey_path.exists():
-            journey_path = Path(journey)
-        if not journey_path.exists():
-            console.print(f"[bold red]Error:[/bold red] Journey blueprint '{journey}' not found in .loki/journeys/")
-            raise typer.Exit(code=1)
-        try:
-            with open(journey_path, encoding="utf-8") as f:
-                journey_data = json.load(f)
-        except Exception as e:
-            console.print(f"[bold red]Error reading journey blueprint:[/bold red] {e}")
-            raise typer.Exit(code=1)
-
-    # 2. Resolve configuration from .loki/config.yaml or journey
-    config = load_loki_config()
-    target_config = config.get("target", {})
-    resolved_url = url or (journey_data.get("start_url") if journey_data else None) or target_config.get("default_url")
-    if not resolved_url:
-        console.print("[bold red]Error:[/bold red] No target URL provided and no default found in .loki/config.yaml.")
-        console.print("Run [bold cyan]python -m loki.cli init[/bold cyan] first, or pass a URL: [bold green]loki run <url>[/bold green]")
+    try:
+        plan = prepare_run(
+            RunOptions(
+                url=url,
+                duration=duration,
+                headed=headed,
+                persona=persona,
+                swarm=swarm,
+                journey=journey,
+                device=device,
+                orientation=orientation,
+                concurrency=concurrency,
+                target_selector=target_selector,
+                api_chaos=api_chaos,
+                fault_rate=fault_rate,
+                auth_chaos=auth_chaos,
+                browser=browser.value,
+                seed=seed,
+            )
+        )
+    except RunSetupError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        if e.hint:
+            console.print(e.hint)
         raise typer.Exit(code=1)
 
-    ensure_target_authorized(resolved_url, authorized_flag=authorized)
+    ensure_target_authorized(plan.url, authorized_flag=authorized)
 
-    resolved_duration = duration if duration is not None else target_config.get("timeout_seconds", 5)
-    chaos_config = config.get("chaos", {})
-    burst_count = int(chaos_config.get("click_burst_count", 5))
-    if persona is None:
-        try:
-            persona = PersonaChoice(chaos_config.get("default_persona", "rage-clicker"))
-        except ValueError:
-            persona = PersonaChoice.RAGE_CLICKER
+    persona_label = _persona_label(plan)
+    _print_run_header(plan, persona_label)
 
-    # Resolve API Chaos configuration
-    api_chaos_config = resolve_api_chaos_config(
-        cli_enabled=api_chaos,
-        fault_rate=fault_rate,
-        auth_chaos=auth_chaos,
-    )
-
-    # Resolve deterministic random seed
-    resolved_seed = seed if seed is not None else random.randint(100000, 999999)
-    random.seed(resolved_seed)
-
-    if swarm:
-        persona = PersonaChoice.SWARM
-    active_persona = build_persona(
-        persona,
-        click_burst_count=burst_count,
-        api_chaos_config=api_chaos_config,
-        seed=resolved_seed,
-    )
-
-    if active_persona and active_persona.name == "Swarm":
-        persona_label = "Swarm 🐝 [dim](NoviceChaotic, Adversary, NetworkTormentor, RageClicker)[/dim]"
+    if plan.concurrency > 1:
+        console.print(
+            f"[bold magenta]🔀 Concurrency Probe:[/bold magenta] {plan.concurrency} synchronized lanes on "
+            f"'{plan.target_selector or 'auto-detected primary button'}' [dim](chaos persona skipped in this mode)[/dim]"
+        )
+        status_msg = f"Firing {plan.concurrency} lanes in lockstep..."
+    elif plan.journey_data:
+        status_msg = f"Executing guided chaos assault on {plan.journey_data.get('name')}..."
     else:
-        persona_label = active_persona.name if active_persona else "Passive Observer"
+        status_msg = f"Unleashing {persona_label}..."
 
-    console.print(f"[bold cyan]⚡ Target URL:[/bold cyan] {resolved_url}")
-    console.print(f"[bold cyan]🌐 Browser Engine:[/bold cyan] {browser.value.capitalize()}")
-    console.print(f"[bold cyan]🎲 Random Seed:[/bold cyan] {resolved_seed}")
-    if journey_data:
-        console.print(f"[bold blue]🗺️ Guided Journey:[/bold blue] {journey_data.get('name')} ({journey_data.get('total_steps')} steps)")
+    try:
+        with Status(f"[bold yellow]{status_msg}[/bold yellow]", console=console):
+            report = run_attack(plan)
+    except TargetNotAuthorizedError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    _print_attack_summary(report, requested_device=device)
+
+    # Business rules evaluation via AI
+    evaluations = None
+    if rules and RULES_FILE.exists():
+        with Status("[bold yellow]Evaluating business assertions against .loki/rules.md with AI...[/bold yellow]", console=console):
+            evaluations = evaluate_rules(report)
+        _print_rules_scorecard(evaluations)
+
+    run_dir = save_artifacts(report, evaluations, report_html=report_html)
+    _print_failures(report, run_dir)
+
+    if run_dir and open_report:
+        report_file = run_dir / "report.html"
+        if report_file.exists():
+            console.print("[dim]Opening HTML report in browser...[/dim]")
+            webbrowser.open(f"file:///{report_file.resolve()}")
+
+    if report.has_crashes and auto_heal and run_dir:
+        _auto_heal(report, run_dir)
+
+    write_ci_summary(report, evaluations, run_dir)
+
+    if is_ci_mode:
+        if not gate_passed(report, evaluations):
+            console.print("\n[bold red]❌ CI/CD Quality Gate FAILED: Failures, crashes, or business rule violations detected.[/bold red]")
+            raise typer.Exit(code=1)
+        console.print("\n[bold green]✔ CI/CD Quality Gate PASSED: 0 failures and all business rules satisfied.[/bold green]")
+        raise typer.Exit(code=0)
+
+
+def _persona_label(plan: RunPlan) -> str:
+    if plan.persona and plan.persona.name == "Swarm":
+        return "Swarm 🐝 [dim](NoviceChaotic, Adversary, NetworkTormentor, RageClicker)[/dim]"
+    return plan.persona.name if plan.persona else "Passive Observer"
+
+
+def _print_run_header(plan: RunPlan, persona_label: str) -> None:
+    console.print(f"[bold cyan]⚡ Target URL:[/bold cyan] {plan.url}")
+    console.print(f"[bold cyan]🌐 Browser Engine:[/bold cyan] {plan.browser.capitalize()}")
+    console.print(f"[bold cyan]🎲 Random Seed:[/bold cyan] {plan.seed}")
+    if plan.journey_data:
+        console.print(f"[bold blue]🗺️ Guided Journey:[/bold blue] {plan.journey_data.get('name')} ({plan.journey_data.get('total_steps')} steps)")
     console.print(f"[bold magenta]🎭 Active Persona:[/bold magenta] {persona_label}")
-    if device:
-        console.print(f"[bold green]📱 Requested Device:[/bold green] {device} ({orientation})")
-    if api_chaos_config.enabled and persona in API_CHAOS_PERSONAS:
-        auth_status = "on" if api_chaos_config.auth_chaos_enabled else "off"
+    if plan.device:
+        console.print(f"[bold green]📱 Requested Device:[/bold green] {plan.device} ({plan.orientation})")
+    if plan.api_chaos_active:
+        auth_status = "on" if plan.api_chaos_config.auth_chaos_enabled else "off"
         console.print(
             f"[bold magenta]⚡ API Chaos (Ghost in the Wire):[/bold magenta] Active "
-            f"[dim](rate: {int(api_chaos_config.fault_rate * 100)}%, auth chaos: {auth_status})[/dim]"
+            f"[dim](rate: {int(plan.api_chaos_config.fault_rate * 100)}%, auth chaos: {auth_status})[/dim]"
         )
 
-    sandbox = ChaosSandbox(
-        headless=target_config.get("headless", True) and not headed,
-        browser_name=browser.value,
-        seed=resolved_seed,
-    )
 
-    if concurrency > 1:
-        resolved_target_selector = target_selector
-        if not resolved_target_selector and journey_data:
-            for step in journey_data.get("steps", []):
-                if step.get("action") == "click" and step.get("selector"):
-                    resolved_target_selector = step["selector"]
-                    break
-        console.print(
-            f"[bold magenta]🔀 Concurrency Probe:[/bold magenta] {concurrency} synchronized lanes on "
-            f"'{resolved_target_selector or 'auto-detected primary button'}' [dim](chaos persona skipped in this mode)[/dim]"
-        )
-        with Status(f"[bold yellow]Firing {concurrency} lanes in lockstep...[/bold yellow]", console=console):
-            report = sandbox.run_concurrent_probe(
-                target_url=resolved_url,
-                concurrency=concurrency,
-                selector=resolved_target_selector,
-                device_name=device,
-                orientation=orientation,
-            )
-    else:
-        status_msg = f"Executing guided chaos assault on {journey_data.get('name')}..." if journey_data else f"Unleashing {persona_label}..."
-        with Status(f"[bold yellow]{status_msg}[/bold yellow]", console=console):
-            report = sandbox.run_session(
-                target_url=resolved_url,
-                duration=resolved_duration,
-                persona=active_persona,
-                journey_data=journey_data,
-                device_name=device,
-                orientation=orientation,
-            )
+def _print_capped(items: list[str], label: str, noun: str, limit: int = 10) -> None:
+    for item in items[:limit]:
+        console.print(f"  [red]• {label}:[/red] {item}")
+    if len(items) > limit:
+        console.print(f"  [dim]... and {len(items) - limit} more {noun}.[/dim]")
 
+
+def _print_attack_summary(report: IncidentReport, requested_device: str | None) -> None:
     console.print(f"\n[bold green]✔ Attack session finished in {report.duration_seconds}s[/bold green]")
-    if device and not report.device_name:
+    if requested_device and not report.device_name:
         console.print(
-            f"[bold yellow]⚠ Device alias '{device}' was not recognized — the session ran in the default "
+            f"[bold yellow]⚠ Device alias '{requested_device}' was not recognized — the session ran in the default "
             f"desktop viewport instead of emulating a mobile device. Check the exact Playwright device name "
             f"(e.g. 'iPhone 15', 'Pixel 7') or an alias documented in .agents/skills/loki-chaos/references/devices.md.[/bold yellow]"
         )
@@ -592,98 +601,69 @@ def run(
         console.print(f"\n[bold yellow]⚡ Injected API Faults ({len(report.api_faults)}):[/bold yellow]")
         for f in report.api_faults[:5]:
             ftype = f.get("fault_type", "fault")
-            url = f.get("url", "unknown")
+            fault_url = f.get("url", "unknown")
             status = f.get("status")
             status_str = f" [status {status}]" if status else ""
-            console.print(f"  [dim]•[/dim] [cyan]{ftype}[/cyan] -> [dim]{url}[/dim]{status_str}")
+            console.print(f"  [dim]•[/dim] [cyan]{ftype}[/cyan] -> [dim]{fault_url}[/dim]{status_str}")
         if len(report.api_faults) > 5:
             console.print(f"  [dim]... and {len(report.api_faults) - 5} more injected faults.[/dim]")
-    # 3. Business Rules Evaluation via AI
-    evaluations = None
-    rules_file = Path(".loki/rules.md")
-    if rules and rules_file.exists():
-        rules_content = rules_file.read_text(encoding="utf-8")
-        brain = AIBrain()
-        with Status("[bold yellow]Evaluating business assertions against .loki/rules.md with AI...[/bold yellow]", console=console):
-            evaluations = brain.evaluate_business_rules(report=report, rules_content=rules_content)
 
-        if evaluations:
-            table = Table(title="📋 Business Rules Verification Scorecard", border_style="cyan")
-            table.add_column("Business Rule", style="white", ratio=4)
-            table.add_column("Status", justify="center", ratio=2)
-            table.add_column("AI Observation / Evidence", style="dim", ratio=5)
 
-            has_violations = False
-            has_errors = False
-            for item in evaluations:
-                status = item.get("status", "UNKNOWN").upper()
-                if status == "PASSED":
-                    status_text = "[bold green]✔ PASSED[/bold green]"
-                elif status == "VIOLATED":
-                    status_text = "[bold red]❌ VIOLATED[/bold red]"
-                    has_violations = True
-                elif status == "ERROR":
-                    status_text = "[bold red]⚠ ERROR[/bold red]"
-                    has_errors = True
-                elif status == "SKIPPED":
-                    status_text = "[dim]SKIPPED[/dim]"
-                else:
-                    status_text = f"[bold yellow]{status}[/bold yellow]"
+def _print_rules_scorecard(evaluations: list[dict] | None) -> None:
+    if not evaluations:
+        return
+    table = Table(title="📋 Business Rules Verification Scorecard", border_style="cyan")
+    table.add_column("Business Rule", style="white", ratio=4)
+    table.add_column("Status", justify="center", ratio=2)
+    table.add_column("AI Observation / Evidence", style="dim", ratio=5)
 
-                table.add_row(
-                    item.get("rule", "Unnamed Rule"),
-                    status_text,
-                    item.get("observation", "No observation"),
-                )
+    has_violations = False
+    has_errors = False
+    for item in evaluations:
+        status = item.get("status", "UNKNOWN").upper()
+        if status == "PASSED":
+            status_text = "[bold green]✔ PASSED[/bold green]"
+        elif status == "VIOLATED":
+            status_text = "[bold red]❌ VIOLATED[/bold red]"
+            has_violations = True
+        elif status == "ERROR":
+            status_text = "[bold red]⚠ ERROR[/bold red]"
+            has_errors = True
+        elif status == "SKIPPED":
+            status_text = "[dim]SKIPPED[/dim]"
+        else:
+            status_text = f"[bold yellow]{status}[/bold yellow]"
 
-            console.print("\n", table)
-            if has_violations:
-                console.print("[bold red]⚠ Business rule violations detected during this attack session![/bold red]")
-            elif has_errors:
-                console.print("[bold yellow]⚠ AI rules evaluation encountered an error (check API status).[/bold yellow]")
-            else:
-                console.print("[bold green]✔ All business rules successfully satisfied![/bold green]")
+        table.add_row(
+            item.get("rule", "Unnamed Rule"),
+            status_text,
+            item.get("observation", "No observation"),
+        )
 
-    # 4. Save Session Artifacts & Generate HTML Report
-    reporter = IncidentReporter()
-    run_dir = None
-    if report.has_crashes or report_html:
-        run_dir = reporter.save_session(report, rules_evaluations=evaluations)
+    console.print("\n", table)
+    if has_violations:
+        console.print("[bold red]⚠ Business rule violations detected during this attack session![/bold red]")
+    elif has_errors:
+        console.print("[bold yellow]⚠ AI rules evaluation encountered an error (check API status).[/bold yellow]")
+    else:
+        console.print("[bold green]✔ All business rules successfully satisfied![/bold green]")
 
+
+def _print_failures(report: IncidentReport, run_dir: Path | None) -> None:
     if report.has_crashes:
         console.print(f"\n[bold red]💥 ANOMALIES & FAILURES DETECTED ({report.total_failures_count})![/bold red]")
-        if report.crashes:
-            for crash in set(report.crashes):
-                console.print(f"  [red]• Unhandled JS exception:[/red] {crash}")
-        if report.unhandled_rejections:
-            for rej in report.unhandled_rejections:
-                console.print(f"  [red]• Unhandled Promise rejection:[/red] {rej}")
-        if report.console_errors:
-            for cerr in report.console_errors[:10]:
-                console.print(f"  [red]• Console error (silent break):[/red] {cerr}")
-            if len(report.console_errors) > 10:
-                console.print(f"  [dim]... and {len(report.console_errors) - 10} more console errors.[/dim]")
-        if report.http_errors:
-            for http_err in report.http_errors[:10]:
-                console.print(f"  [red]• HTTP error (4xx/5xx):[/red] {http_err}")
-            if len(report.http_errors) > 10:
-                console.print(f"  [dim]... and {len(report.http_errors) - 10} more HTTP errors.[/dim]")
-        if report.failed_requests:
-            for req_fail in report.failed_requests[:10]:
-                console.print(f"  [red]• Request failed / CORS:[/red] {req_fail}")
-            if len(report.failed_requests) > 10:
-                console.print(f"  [dim]... and {len(report.failed_requests) - 10} more failed requests.[/dim]")
-        if report.navigation_errors:
-            for nav_err in report.navigation_errors:
-                console.print(f"  [red]• Navigation / Error page:[/red] {nav_err}")
-        if report.resource_failures:
-            for res_fail in report.resource_failures[:10]:
-                console.print(f"  [red]• Broken resource:[/red] {res_fail}")
-            if len(report.resource_failures) > 10:
-                console.print(f"  [dim]... and {len(report.resource_failures) - 10} more resource failures.[/dim]")
-        if report.unexpected_dialogs:
-            for dlg in report.unexpected_dialogs:
-                console.print(f"  [red]• Unexpected dialog:[/red] {dlg}")
+        for crash in set(report.crashes):
+            console.print(f"  [red]• Unhandled JS exception:[/red] {crash}")
+        for rej in report.unhandled_rejections:
+            console.print(f"  [red]• Unhandled Promise rejection:[/red] {rej}")
+        _print_capped(report.console_errors, "Console error (silent break)", "console errors")
+        _print_capped(report.http_errors, "HTTP error (4xx/5xx)", "HTTP errors")
+        _print_capped(report.failed_requests, "Request failed / CORS", "failed requests")
+        for nav_err in report.navigation_errors:
+            console.print(f"  [red]• Navigation / Error page:[/red] {nav_err}")
+        _print_capped(report.resource_failures, "Broken resource", "resource failures")
+        for dlg in report.unexpected_dialogs:
+            console.print(f"  [red]• Unexpected dialog:[/red] {dlg}")
         if run_dir:
             console.print(
                 Panel(
@@ -709,66 +689,34 @@ def run(
         for issue in report.layout_issues:
             console.print(f"  [yellow]•[/yellow] {issue}")
 
-    if run_dir and open_report:
-        report_file = run_dir / "report.html"
-        if report_file.exists():
-            console.print("[dim]Opening HTML report in browser...[/dim]")
-            webbrowser.open(f"file:///{report_file.resolve()}")
 
-    # 4.5 Autonomous Self-Healing Loop
-    if report.has_crashes and auto_heal and run_dir:
-        console.print("\n[bold magenta]🚑 [SELF-HEALING] Crashes detected! Initiating autonomous patch synthesis...[/bold magenta]")
-        healer = CodeHealer()
+def _auto_heal(report: IncidentReport, run_dir: Path) -> None:
+    """Closed-loop self-healing for `run --auto-heal`: synthesize, apply, verify (or roll back)."""
+    console.print("\n[bold magenta]🚑 [SELF-HEALING] Crashes detected! Initiating autonomous patch synthesis...[/bold magenta]")
+    healing = HealingService()
+    try:
         with Status("[bold yellow]Synthesizing surgical code patch...[/bold yellow]", console=console):
-            patch = healer.synthesize_patch(run_dir)
-
-        if patch.get("success"):
-            target_file = Path(patch["target_file"])
-            console.print(
-                Panel(
-                    f"🎯 [bold cyan]Target File:[/bold cyan] {target_file}\n"
-                    f"💡 [bold cyan]Explanation:[/bold cyan] {patch.get('explanation')}",
-                    title="[bold yellow]🩹 Autonomous Patch Synthesized[/bold yellow]",
-                    border_style="yellow",
-                )
+            proposal = healing.synthesize(run_dir)
+        console.print(
+            Panel(
+                f"🎯 [bold cyan]Target File:[/bold cyan] {proposal.target_file}\n"
+                f"💡 [bold cyan]Explanation:[/bold cyan] {proposal.explanation}",
+                title="[bold yellow]🩹 Autonomous Patch Synthesized[/bold yellow]",
+                border_style="yellow",
             )
-            with Status("[bold yellow]Applying patch and verifying with reproduction test...[/bold yellow]", console=console):
-                applied = healer.apply_patch(
-                    target_file=target_file,
-                    original_snippet=patch["original_snippet"],
-                    replacement_snippet=patch["replacement_snippet"],
-                )
-                if applied.get("success"):
-                    ver_res = healer.verify_fix(
-                        run_dir,
-                        backup_file=applied.get("backup_file"),
-                        target_file=target_file,
-                    )
-                    if ver_res.get("verified"):
-                        console.print(Panel(ver_res["message"], title="[bold green]🎉 AUTO-HEALING SUCCESS[/bold green]", border_style="green"))
-                        report.crashes.clear()
-                    else:
-                        console.print(Panel(ver_res["message"], title="[bold red]❌ AUTO-HEALING REVERTED[/bold red]", border_style="red"))
-        else:
-            console.print(f"[yellow]⚠ Self-healing skipped: {patch.get('error')}[/yellow]")
+        )
+        with Status("[bold yellow]Applying patch and verifying with reproduction test...[/bold yellow]", console=console):
+            applied = healing.apply(proposal)
+            verification = healing.verify(applied, run_dir)
+    except HealError as e:
+        console.print(f"[yellow]⚠ Self-healing skipped: {e}[/yellow]")
+        return
 
-    # 5. Write GitHub Actions Step Summary if available
-    has_violations = any(item.get("status") == "VIOLATED" for item in evaluations) if evaluations else False
-    CIGate.write_github_step_summary(
-        report=report,
-        evaluations=evaluations,
-        run_dir=run_dir,
-        has_violations=has_violations,
-    )
-
-    # 6. CI/CD Quality Gate Enforcement
-    if is_ci_mode:
-        if report.has_crashes or has_violations:
-            console.print("\n[bold red]❌ CI/CD Quality Gate FAILED: Failures, crashes, or business rule violations detected.[/bold red]")
-            raise typer.Exit(code=1)
-        else:
-            console.print("\n[bold green]✔ CI/CD Quality Gate PASSED: 0 failures and all business rules satisfied.[/bold green]")
-            raise typer.Exit(code=0)
+    if verification.verified:
+        console.print(Panel(verification.message, title="[bold green]🎉 AUTO-HEALING SUCCESS[/bold green]", border_style="green"))
+        report.crashes.clear()
+    else:
+        console.print(Panel(verification.message, title="[bold red]❌ AUTO-HEALING REVERTED[/bold red]", border_style="red"))
 
 @app.command()
 def fix(
@@ -780,7 +728,7 @@ def fix(
 ):
     """Analyze a captured crash with AI reasoning and generate an automated fix."""
     brain = AIBrain()
-    healer = CodeHealer()
+    healing = HealingService()
 
     with Status("[bold yellow]LOKI AI Brain is analyzing crash evidence...[/bold yellow]", console=console):
         result = brain.diagnose_and_fix(run_id=run_id, model=model)
@@ -796,68 +744,61 @@ def fix(
         )
     )
 
-    if apply:
-        target_run_dir = healer.replayer.get_run_dir(run_id)
-        if not target_run_dir:
-            console.print(f"[bold red]Error:[/bold red] Run directory '{run_id or 'latest'}' not found.")
-            raise typer.Exit(code=1)
+    if not apply:
+        return
 
-        console.print("\n[bold cyan]🔧 Synthesizing autonomous surgical code patch...[/bold cyan]")
+    target_run_dir = healing.find_run_dir(run_id)
+    if not target_run_dir:
+        console.print(f"[bold red]Error:[/bold red] Run directory '{run_id or 'latest'}' not found.")
+        raise typer.Exit(code=1)
+
+    console.print("\n[bold cyan]🔧 Synthesizing autonomous surgical code patch...[/bold cyan]")
+    try:
         with Status("[bold yellow]LOKI Self-Healing Engine is crafting patch...[/bold yellow]", console=console):
-            patch = healer.synthesize_patch(target_run_dir, model=model)
+            proposal = healing.synthesize(target_run_dir, model=model)
+    except HealError as e:
+        console.print(f"[bold red]Healing Error:[/bold red] {e}")
+        raise typer.Exit(code=1)
 
-        if not patch.get("success"):
-            console.print(f"[bold red]Healing Error:[/bold red] {patch.get('error')}")
-            raise typer.Exit(code=1)
-
-        target_file = Path(patch["target_file"])
-        console.print(
-            Panel(
-                f"🎯 [bold cyan]Target File:[/bold cyan] {target_file}\n"
-                f"💡 [bold cyan]Explanation:[/bold cyan] {patch.get('explanation')}\n\n"
-                f"[bold yellow]Original Snippet:[/bold yellow]\n```\n{patch.get('original_snippet')}\n```\n\n"
-                f"[bold green]Replacement Snippet:[/bold green]\n```\n{patch.get('replacement_snippet')}\n```",
-                title="[bold yellow]🩹 Proposed Surgical Patch[/bold yellow]",
-                border_style="yellow",
-            )
+    console.print(
+        Panel(
+            f"🎯 [bold cyan]Target File:[/bold cyan] {proposal.target_file}\n"
+            f"💡 [bold cyan]Explanation:[/bold cyan] {proposal.explanation}\n\n"
+            f"[bold yellow]Original Snippet:[/bold yellow]\n```\n{proposal.original_snippet}\n```\n\n"
+            f"[bold green]Replacement Snippet:[/bold green]\n```\n{proposal.replacement_snippet}\n```",
+            title="[bold yellow]🩹 Proposed Surgical Patch[/bold yellow]",
+            border_style="yellow",
         )
+    )
 
-        if not yes:
-            if not Confirm.ask("Do you want LOKI to apply this patch to your code?", default=True):
-                console.print("[dim]Self-healing cancelled by user.[/dim]")
-                return
+    if not yes:
+        if not Confirm.ask("Do you want LOKI to apply this patch to your code?", default=True):
+            console.print("[dim]Self-healing cancelled by user.[/dim]")
+            return
 
+    try:
         with Status("[bold yellow]Applying patch to source code...[/bold yellow]", console=console):
-            applied = healer.apply_patch(
-                target_file=target_file,
-                original_snippet=patch["original_snippet"],
-                replacement_snippet=patch["replacement_snippet"],
-            )
+            applied = healing.apply(proposal)
+    except HealError as e:
+        console.print(f"[bold red]Patch Failed:[/bold red] {e}")
+        raise typer.Exit(code=1)
 
-        if not applied.get("success"):
-            console.print(f"[bold red]Patch Failed:[/bold red] {applied.get('error')}")
+    console.print(f"\n[bold green]✔ Patch applied successfully to `{applied.target_file}`![/bold green]")
+    if applied.diff:
+        console.print(Panel(Syntax(applied.diff, "diff", theme="monokai"), title="Unified Diff Preview", border_style="cyan"))
+
+    if verify:
+        console.print("\n[bold cyan]🧪 Executing deterministic reproduction test to verify fix...[/bold cyan]")
+        with Status("[bold yellow]Testing whether crash is permanently resolved...[/bold yellow]", console=console):
+            verification = healing.verify(applied, target_run_dir)
+
+        if verification.verified:
+            console.print(Panel(verification.message, title="[bold green]🎉 SELF-HEALING SUCCESS[/bold green]", border_style="green"))
+        else:
+            console.print(Panel(verification.message, title="[bold red]❌ SELF-HEALING FAILED[/bold red]", border_style="red"))
+            if verification.output:
+                console.print(f"[dim]{verification.output}[/dim]")
             raise typer.Exit(code=1)
-
-        console.print(f"\n[bold green]✔ Patch applied successfully to `{target_file}`![/bold green]")
-        if applied.get("diff"):
-            console.print(Panel(Syntax(applied["diff"], "diff", theme="monokai"), title="Unified Diff Preview", border_style="cyan"))
-
-        if verify:
-            console.print("\n[bold cyan]🧪 Executing deterministic reproduction test to verify fix...[/bold cyan]")
-            with Status("[bold yellow]Testing whether crash is permanently resolved...[/bold yellow]", console=console):
-                ver_res = healer.verify_fix(
-                    target_run_dir,
-                    backup_file=applied.get("backup_file"),
-                    target_file=target_file,
-                )
-
-            if ver_res.get("verified"):
-                console.print(Panel(ver_res["message"], title="[bold green]🎉 SELF-HEALING SUCCESS[/bold green]", border_style="green"))
-            else:
-                console.print(Panel(ver_res["message"], title="[bold red]❌ SELF-HEALING FAILED[/bold red]", border_style="red"))
-                if ver_res.get("output"):
-                    console.print(f"[dim]{ver_res['output']}[/dim]")
-                raise typer.Exit(code=1)
 
 @app.command()
 def record(
