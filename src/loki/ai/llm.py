@@ -23,17 +23,139 @@ DEFAULT_FALLBACK_MODELS = (
 )
 DEFAULT_TIMEOUT = 25
 _TRANSIENT_MARKERS = ("503", "unavailable", "timeout")
+_RATE_LIMIT_RE = re.compile(
+    r"\b429\b|ratelimiterror|resource_exhausted|quota exceeded|exceeded your current quota|rate limit reached",
+    re.IGNORECASE,
+)
+_AUTH_RE = re.compile(r"\b(401|403)\b|api[ _-]?key|authentication|unauthorized", re.IGNORECASE)
 _JSON_FENCE = re.compile(r"^```[\w-]*[ \t]*\n(.*?)\n?```$", re.DOTALL)
+_LITELLM_PREFIX = re.compile(r"^(?:litellm\.\w+:\s*)+(?:\w+Exception\s*-\s*)?")
+_JSON_BLOB = re.compile(r"\{[\s\S]*\}")
+_RETRY_IN = re.compile(r"(?:retry|try again) in\s+([0-9]+h)?([0-9]+m)?([0-9]+(?:\.[0-9]+)?s)?", re.IGNORECASE)
+_PROVIDER_HINT = re.compile(
+    r"\b(gemini|openai|anthropic|mistral|groq|bedrock|ollama|azure|cohere)(?:exception)?\b",
+    re.IGNORECASE,
+)
+_MODEL_HINT = re.compile(
+    r"\b((?:gemini|gpt|claude|llama|mistral)-[\w./-]*\w|(?:gemini|gpt|claude|llama|mistral)\b(?!exception))",
+    re.IGNORECASE,
+)
 
 Messages = list[dict[str, Any]]
+
+
+def is_rate_limit_error(error: Exception | None) -> bool:
+    """True when the failure looks like HTTP 429 / quota exhaustion."""
+    if error is None:
+        return False
+    return bool(_RATE_LIMIT_RE.search(f"{type(error).__name__} {error}"))
+
+
+def _provider_message(raw: str) -> str | None:
+    """Pull the provider's short `message` field out of an embedded JSON payload."""
+    match = _JSON_BLOB.search(raw)
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            return " ".join(message.split())
+    return None
+
+
+def _compact_retry(message: str) -> str | None:
+    match = _RETRY_IN.search(message)
+    if not match:
+        return None
+    hours, minutes, seconds = match.groups()
+    if hours:
+        return f"retry in ~{hours}"
+    if minutes:
+        return f"retry in ~{minutes}"
+    if seconds:
+        return f"retry in ~{seconds.rstrip('s')}s"
+    return None
+
+
+def summarize_llm_error(error: Exception | None) -> str:
+    """One-line, human-readable summary of a provider failure (no raw JSON payload)."""
+    if error is None:
+        return "Unknown LLM error"
+    raw = str(error).strip() or type(error).__name__
+    provider_msg = _provider_message(raw)
+    text = provider_msg or " ".join(raw.split())
+    # Drop a trailing JSON blob if the provider message extraction failed.
+    if provider_msg is None:
+        text = _JSON_BLOB.sub("", text).strip(" -:\n\t")
+        text = " ".join(text.split()) or type(error).__name__
+    # litellm prefixes such as "litellm.RateLimitError: OpenAIException - " carry no extra detail.
+    text = _LITELLM_PREFIX.sub("", text) or text
+
+    type_name = type(error).__name__
+    provider = None
+    provider_match = _PROVIDER_HINT.search(f"{type_name} {raw}")
+    if provider_match:
+        provider = provider_match.group(1).capitalize()
+        if provider.lower() == "openai":
+            provider = "OpenAI"
+
+    model = None
+    model_match = _MODEL_HINT.search(provider_msg or "") or _MODEL_HINT.search(raw)
+    if model_match:
+        model = model_match.group(1)
+
+    if is_rate_limit_error(error):
+        head = f"{provider} quota exceeded (429)" if provider else "Quota exceeded (429)"
+        detail_bits: list[str] = []
+        lower = text.lower()
+        if "free" in lower and "tier" in lower:
+            detail_bits.append("free-tier limit reached")
+        elif "quota" in lower:
+            detail_bits.append("quota limit reached")
+        elif "rate limit" in lower:
+            detail_bits.append("rate limit reached")
+        else:
+            detail_bits.append(text[:120])
+        if model:
+            detail_bits.append(f"for {model}")
+        retry = _compact_retry(text) or _compact_retry(raw)
+        if retry:
+            detail_bits.append(f"— {retry}")
+        return f"{head}: {' '.join(detail_bits)}"
+
+    # Missing / invalid API key
+    lower_raw = raw.lower()
+    if _AUTH_RE.search(raw):
+        head = f"{provider} authentication error" if provider else "Authentication error"
+        return f"{head}: {text[:160]}"
+
+    # Timeouts / connection issues
+    if any(marker in lower_raw for marker in ("timeout", "timed out", "connection", "connecterror", "network")):
+        head = f"{provider} connection error" if provider else "Connection error"
+        short = text[:160] if text else type_name
+        return f"{head}: {short}"
+
+    head = f"{provider} error" if provider else type_name
+    return f"{head}: {text[:160]}"
 
 
 class LLMError(Exception):
     """Every connection attempt failed. `last_error` holds the final underlying cause."""
 
-    def __init__(self, message: str, last_error: Exception | None = None):
+    def __init__(self, message: str, last_error: Exception | None = None, *, is_rate_limit: bool | None = None):
         super().__init__(message)
         self.last_error = last_error
+        self.is_rate_limit = is_rate_limit_error(last_error) if is_rate_limit is None else is_rate_limit
+
+    @classmethod
+    def from_cause(cls, last_error: Exception | None) -> "LLMError":
+        """Build an LLMError whose message is a concise summary of `last_error`."""
+        return cls(summarize_llm_error(last_error), last_error)
 
 
 class LLMUnavailableError(LLMError):
@@ -86,7 +208,7 @@ def complete(
             return parse(text) if parse else text
         except Exception as e:
             last_error = e
-    raise LLMError(str(last_error), last_error)
+    raise LLMError.from_cause(last_error)
 
 
 def complete_json(
@@ -123,11 +245,11 @@ def open_stream(messages: Messages, model: str | None = None, **options: Any) ->
             first = next((text for text in chunks if text), "")
         except Exception as e:
             if not is_transient(e):
-                raise LLMError(str(e), e) from e
+                raise LLMError.from_cause(e) from e
             last_error = e
             continue
         return _prepend(first, chunks)
-    raise LLMUnavailableError(str(last_error), last_error)
+    raise LLMUnavailableError(summarize_llm_error(last_error), last_error)
 
 
 def _prepend(first: str, rest: Iterator[str]) -> Iterator[str]:

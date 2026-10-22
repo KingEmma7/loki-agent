@@ -101,14 +101,22 @@ Please provide your answer with the following structure:
 
         # Every attempt failed (missing/invalid key, unreachable endpoint, provider
         # outage...) — fall back to a deterministic diagnosis built only from evidence.
-        hint = (
-            "Check the connection configured under `ai:` in `.loki/config.yaml` "
-            "(model, api_base, api_key_env)."
-            if is_ai_customized(model) else
-            "Set `GEMINI_API_KEY`, or configure `ai:` in `.loki/config.yaml` to point at "
-            "any other LiteLLM-compatible provider (OpenAI, Anthropic, Mistral, Groq, a "
-            "local Ollama/vLLM server, or any OpenAI-compatible endpoint via `api_base`)."
-        )
+        if last_error.is_rate_limit:
+            hint = (
+                "Quota or rate limit hit. Wait for the reset window, use another API key, "
+                "or switch model with `/model` in `loki chat`."
+            )
+        elif is_ai_customized(model):
+            hint = (
+                "Check the connection configured under `ai:` in `.loki/config.yaml` "
+                "(model, api_base, api_key_env)."
+            )
+        else:
+            hint = (
+                "Set `GEMINI_API_KEY`, or configure `ai:` in `.loki/config.yaml` to point at "
+                "any other LiteLLM-compatible provider (OpenAI, Anthropic, Mistral, Groq, a "
+                "local Ollama/vLLM server, or any OpenAI-compatible endpoint via `api_base`)."
+            )
         return {
             "run_id": target_dir.name,
             "incident": incident_data,

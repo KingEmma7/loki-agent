@@ -113,3 +113,122 @@ def test_open_stream_all_transient_is_unavailable(default_connection, monkeypatc
     _fake_completion(monkeypatch, [RuntimeError("timeout")] * 4)
     with pytest.raises(llm.LLMUnavailableError):
         llm.open_stream([])
+
+
+def test_summarize_rate_limit_strips_json_payload():
+    raw = (
+        'litellm.RateLimitError: litellm.RateLimitError: geminiException - {\n'
+        '  "error": {\n'
+        '    "code": 429,\n'
+        '    "message": "You exceeded your current quota for gemini-3.8-flash. '
+        'Please retry in 6h22m8.9s.",\n'
+        '    "status": "RESOURCE_EXHAUSTED",\n'
+        '    "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure"}]\n'
+        "  }\n"
+        "}"
+    )
+    err = type("RateLimitError", (Exception,), {})(raw)
+    summary = llm.summarize_llm_error(err)
+    assert "429" in summary
+    assert "{" not in summary
+    assert "RESOURCE_EXHAUSTED" not in summary
+    assert "retry in ~6h" in summary
+    assert llm.is_rate_limit_error(err) is True
+
+
+def test_summarize_missing_api_key():
+    err = RuntimeError("401 invalid api key for openai")
+    summary = llm.summarize_llm_error(err)
+    assert "Authentication" in summary or "authentication" in summary.lower()
+    assert "{" not in summary
+    assert llm.is_rate_limit_error(err) is False
+
+
+def test_summarize_timeout():
+    err = TimeoutError("Request timed out after 25s connecting to api.example.com")
+    summary = llm.summarize_llm_error(err)
+    assert "Connection" in summary or "timeout" in summary.lower()
+    assert "{" not in summary
+
+
+def test_complete_raises_concise_llm_error(custom_connection, monkeypatch):
+    raw = (
+        'RateLimitError: geminiException - {"error": {"code": 429, '
+        '"message": "You exceeded your current quota. Please retry in 1h5m", '
+        '"status": "RESOURCE_EXHAUSTED"}}'
+    )
+    cause = type("RateLimitError", (Exception,), {})(raw)
+    _fake_completion(monkeypatch, [cause])
+    with pytest.raises(llm.LLMError) as exc:
+        llm.complete("hi")
+    assert exc.value.last_error is cause
+    assert exc.value.is_rate_limit is True
+    assert "{" not in str(exc.value)
+    assert "429" in str(exc.value)
+
+
+GEMINI_429 = (
+    "litellm.RateLimitError: litellm.RateLimitError: geminiException - {\n"
+    '  "error": {\n'
+    '    "code": 429,\n'
+    '    "message": "You exceeded your current quota, please check your plan and billing details. '
+    "* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, "
+    'limit: 20, model: gemini-3.8-flash\\nPlease retry in 6h22m8.9s.",\n'
+    '    "status": "RESOURCE_EXHAUSTED",\n'
+    '    "details": []\n'
+    "  }\n"
+    "}"
+)
+
+
+class RateLimitError(Exception):
+    pass
+
+
+def test_summarize_issue_gemini_payload_names_the_model():
+    summary = llm.summarize_llm_error(RateLimitError(GEMINI_429))
+    assert summary == "Gemini quota exceeded (429): free-tier limit reached for gemini-3.8-flash — retry in ~6h"
+
+
+def test_port_numbers_are_not_status_codes():
+    for raw in (
+        "Could not parse response from http://localhost:4290/v1",
+        "Could not parse response from http://localhost:4013/v1",
+        "Could not parse response from http://localhost:14030/v1",
+    ):
+        err = ValueError(raw)
+        assert not llm.is_rate_limit_error(err)
+        summary = llm.summarize_llm_error(err)
+        assert "quota" not in summary.lower()
+        assert "authentication" not in summary.lower()
+
+
+def test_summarize_openai_litellm_rate_limit():
+    err = RateLimitError(
+        "litellm.RateLimitError: OpenAIException - Rate limit reached for gpt-4o in organization org-x "
+        "on requests per min (RPM): Limit 3, Used 3, Requested 1. Please try again in 20s."
+    )
+    summary = llm.summarize_llm_error(err)
+    assert summary == "OpenAI quota exceeded (429): rate limit reached for gpt-4o — retry in ~20s"
+
+
+def test_diagnose_shows_quota_tip_on_rate_limit(tmp_path, monkeypatch):
+    import json
+
+    from loki.ai.brain import AIBrain
+
+    run_dir = tmp_path / "run_quota"
+    run_dir.mkdir()
+    (run_dir / "incident.json").write_text(
+        json.dumps({"target_url": "http://localhost:8000", "persona": "Tester", "crashes": ["boom"]}),
+        encoding="utf-8",
+    )
+
+    def fail(*_args, **_kwargs):
+        raise llm.LLMError.from_cause(RateLimitError(GEMINI_429))
+
+    monkeypatch.setattr(llm, "complete", fail)
+    result = AIBrain(runs_dir=str(tmp_path)).diagnose_and_fix(run_id=run_dir.name)
+    text = json.dumps(result)
+    assert "Quota or rate limit hit" in text
+    assert "RESOURCE_EXHAUSTED" not in text
