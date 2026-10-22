@@ -12,6 +12,5 @@ api_chaos:
   auth_chaos: true
   auth_fault_rate: 0.4
 ai:
-  provider: gemini
-  model: gemini-flash-latest
+  model: gemini/gemini-flash-latest
 

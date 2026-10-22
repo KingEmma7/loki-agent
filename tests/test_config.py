@@ -283,3 +283,13 @@ def test_load_models_registry_corrupted_or_invalid(tmp_path: Path, monkeypatch):
     # Non-dict JSON
     models_path.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
     assert load_models_registry() == {"active": None, "profiles": []}
+
+
+def test_scaffolded_default_model_is_not_customized(tmp_path: Path, monkeypatch):
+    """The model `loki init` writes must match the bundled default and not count as customized."""
+    monkeypatch.chdir(tmp_path)
+    config_dir = tmp_path / ".loki"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(yaml.dump({"ai": {"model": DEFAULT_MODEL}}), encoding="utf-8")
+    assert resolve_model() == DEFAULT_MODEL
+    assert is_ai_customized() is False

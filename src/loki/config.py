@@ -167,7 +167,10 @@ def is_ai_customized(explicit_model: str | None = None) -> bool:
     if explicit_model or get_active_model_profile():
         return True
     ai = load_loki_config().get("ai") or {}
-    return bool(ai.get("model") or ai.get("api_base") or ai.get("api_key_env"))
+    model = ai.get("model")
+    if model == DEFAULT_MODEL:
+        model = None
+    return bool(model or ai.get("api_base") or ai.get("api_key_env"))
 
 
 def resolve_ai_connection(explicit_model: str | None = None) -> dict[str, Any]:

@@ -364,7 +364,7 @@ def init(
             f"  📜 [cyan]{paths['rules']}[/cyan] [dim](<Plain English business rules>)[/dim]\n"
             f"  🧬 [cyan]{paths['knowledge']}[/cyan] [dim](<Detected architectural fingerprint>)[/dim]\n\n"
             f"[bold yellow]Next Step:[/bold yellow] Edit [bold cyan].loki/rules.md[/bold cyan] to add your custom business constraints, "
-            f"or run [bold green]python -m loki.cli run {target_url}[/bold green] to launch an attack.",
+            f"or run [bold green]loki run {target_url}[/bold green] to launch an attack.",
             title="[bold green]🚀 Workspace Initialized[/bold green]",
             border_style="green",
         )

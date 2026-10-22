@@ -77,8 +77,7 @@ api_chaos:
 # just Gemini/OpenAI/Anthropic. Uncomment one block below (or write your own) —
 # see https://docs.litellm.ai/docs/providers for the full provider list.
 ai:
-  provider: gemini
-  model: gemini-flash-latest   # bundled default; needs GEMINI_API_KEY in your env
+  model: gemini/gemini-flash-latest   # bundled default; needs GEMINI_API_KEY in your env
 
   # --- Local model, e.g. Ollama (no API key needed) ---
   # model: ollama/llama3
