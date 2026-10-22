@@ -10,8 +10,8 @@ Security fixes and patches are applied to the active development branch and late
 
 | Version | Supported |
 |:---|:---:|
-| `v1.9.x` (`main`) | ✅ Supported |
-| `< v1.9.0` | ❌ End of Life |
+| `v1.10.x` (`main`) | ✅ Supported |
+| `< v1.10.0` | ❌ End of Life |
 
 ---
 

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/Elabsurdo984/loki-agent/actions"><img src="https://img.shields.io/github/actions/workflow/status/Elabsurdo984/loki-agent/loki.yml?branch=main&label=CI%2FCD%20Gate&logo=github" alt="CI Gate" /></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python" alt="Python Version" /></a>
-  <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/Playwright-Chromium-green?logo=playwright" alt="Playwright" /></a>
+  <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/Playwright-Chromium%20%7C%20Firefox%20%7C%20WebKit-green?logo=playwright" alt="Playwright" /></a>
   <a href="https://litellm.ai/"><img src="https://img.shields.io/badge/AI%20Brain-Gemini%20%2F%20LiteLLM-purple" alt="LiteLLM" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/License-MIT-orange.svg" alt="License" /></a>
 </p>
@@ -28,8 +28,8 @@ Unlike traditional testing frameworks that test for "happy paths", LOKI delibera
 
 ## 🌟 Key Capabilities
 
-### 🐝 1. Swarm Mode & 4 Chaos Personas
-LOKI simulates realistic, erratic human behaviors through specialized personas:
+### 🐝 1. Chaos Personas & Swarm Mode
+LOKI simulates realistic, erratic human behaviors through four specialized personas, plus a swarm orchestrator that runs them together:
 * **`RageClicker`**: Targets interactive buttons with rapid burst clicks to provoke double-submissions and race conditions.
 * **`NoviceChaotic`**: Fuzzes inputs with massive unicode strings, negative values, and erratic keyboard strokes.
 * **`NetworkTormentor`**: Dynamically throttles network conditions (Slow 3G, 1200ms latency) and simulates abrupt offline connection drops mid-flight.
@@ -42,7 +42,7 @@ Define human-readable business invariants in `.loki/rules.md`:
 - "Double clicking payment button must never trigger duplicate charges or unhandled errors."
 - "Invalid coupon codes must display an error message and keep checkout button disabled."
 ```
-At the end of an assault session, LOKI's AI Brain (model set in `.loki/config.yaml` under `ai.model`, via LiteLLM) observes the live DOM snapshot, console logs, and network events to evaluate each rule as **`PASSED`** or **`VIOLATED`** with detailed evidence.
+At the end of an assault session, LOKI's AI Brain (model set in `.loki/config.yaml` under `ai.model`, or via `/model` in `loki chat`; runs on LiteLLM) observes the live DOM snapshot, console logs, and network events to evaluate each rule as **`PASSED`** or **`VIOLATED`** with detailed evidence.
 
 ### 🌐 3. Forensic Network Capture & Privacy Scrubber (`network.har`)
 * Automatically captures full HTTP network traffic in standard `.har` format.
@@ -68,7 +68,7 @@ At the end of an assault session, LOKI's AI Brain (model set in `.loki/config.ya
 ### 💣 8. Infrastructure Chaos (`loki infra`)
 * Goes past the browser to fault-inject the real local process (or Docker container) backing your app: `loki infra kill --port 5432` kills whatever's listening there outright (a crashed/OOM-killed dependency), `loki infra pause --port 5432 -d 10` hangs it for 10s then resumes it (an unresponsive dependency instead of a hard crash), `loki infra cpu-stress`/`memory-stress` saturate every core or hold megabytes resident to simulate a noisy neighbor.
 * Scoped to your own machine (or local Docker daemon) — same trust boundary as `localhost` for `loki run`: if you can already signal it without extra credentials, it's yours to break.
-* `kill`/`cpu-stress`/`memory-stress` are verified against real processes; `pause` uses the standard OS suspend/resume mechanism but couldn't be confirmed to actually halt execution in every environment — test it against your own target before relying on it.
+* `kill`/`cpu-stress`/`memory-stress` are verified against real processes; **`pause` is experimental:** it uses the standard OS suspend/resume mechanism but couldn't be confirmed to actually halt execution in every environment — test it against your own target before relying on it.
 
 ### 🛡️ 9. Strict CI/CD Quality Gate
 * Seamlessly integrates into GitHub Actions, GitLab CI, or pre-commit pipelines (`--ci`, `--strict`).
@@ -94,16 +94,19 @@ Download the installer or standalone executable directly from [GitHub Releases](
 
 #### Option B: Global Isolated Install with `uv` (Recommended for developers)
 ```bash
-# Install globally as a standalone command (fastest):
-uv tool install git+https://github.com/Elabsurdo984/loki-agent.git
+# Install globally from PyPI as a standalone command (fastest):
+uv tool install loki-chaos-agent
 
 # Or run instantly without installing (like npx):
-uvx --from git+https://github.com/Elabsurdo984/loki-agent.git loki run http://localhost:8000 --swarm
+uvx --from loki-chaos-agent loki run http://localhost:8000 --swarm
+
+# Latest unreleased code from GitHub instead of PyPI:
+uv tool install git+https://github.com/Elabsurdo984/loki-agent.git
 ```
 
 #### Option C: Global Install with `pipx`
 ```bash
-pipx install git+https://github.com/Elabsurdo984/loki-agent.git
+pipx install loki-chaos-agent
 ```
 
 #### Option D: Local Development from Source
@@ -159,6 +162,12 @@ loki run http://localhost:8000 --device iphone-15 --orientation portrait
 
 # Run specific persona in visible browser
 loki run http://localhost:8000 -p adversary --headed
+
+# Cross-browser assault (chromium is the default) and a reproducible random sequence
+loki run http://localhost:8000 --browser firefox --seed 42
+
+# Tune API semantic fault injection (500s, corrupt JSON, auth token invalidation)
+loki run http://localhost:8000 --api-chaos --fault-rate 0.5 --no-auth-chaos
 ```
 
 ---
@@ -172,6 +181,9 @@ loki run http://localhost:8000 -p adversary --headed
 | `loki run [url]` | Execute chaos attack session against target URL |
 | `loki run --device <name>` | Emulate mobile device (e.g. `iphone-15`, `pixel-7`, `ipad-pro-11`) & audit layout |
 | `loki run --concurrency <N>` | Fire N synchronized browser lanes at the same action to probe for server-side race conditions |
+| `loki run --browser <engine>` | Attack in `chromium` (default), `firefox` or `webkit` |
+| `loki run --seed <N>` | Repeat the exact same sequence of random chaos actions |
+| `loki run --api-chaos` / `--no-api-chaos` | Toggle API semantic fault injection (`--fault-rate 0.0-1.0`, `--auth-chaos/--no-auth-chaos`) |
 | `loki run --swarm` | Orchestrate all 4 chaos personas in coordinated assault waves |
 | `loki run --auto-heal` | Autonomously synthesize, apply, and verify a code fix on crash |
 | `loki run --journey <name>` | Attack a specific recorded journey blueprint |
@@ -186,7 +198,7 @@ loki run http://localhost:8000 -p adversary --headed
 | `loki version` / `loki version --check` | Display installed version and check for newer releases |
 | `loki infra list` | List local processes with open listening ports |
 | `loki infra kill --port <N>` / `--pid <N>` / `--name <s>` / `--container <name>` | Kill a local process or Docker container outright |
-| `loki infra pause --port <N> -d <seconds>` | Suspend a process/container, then resume it after the given duration |
+| `loki infra pause --port <N> -d <seconds>` | *(experimental)* Suspend a process/container, then resume it after the given duration |
 | `loki infra cpu-stress` / `memory-stress` | Saturate every CPU core, or hold megabytes resident, for a given duration |
 | `loki infra cleanup` | Kill any cpu-stress/memory-stress workers orphaned by a `loki infra` run that was killed from the outside |
 
@@ -204,12 +216,11 @@ This exists because LOKI runs real attacks (input fuzzing, security payloads, fo
 
 ```
 loki-agent/
-├── assets/                     # Brand assets and transparent logos
-│   └── logo.png                # Official LOKI flat vector brandmark
+├── assets/                     # Brand assets (logo.png, logo.ico)
 ├── .github/
 │   └── workflows/
-│       ├── loki.yml            # Automated CI/CD quality gate workflow
-│       └── release.yml         # Cross-platform binary compilation & releases
+│       ├── loki.yml            # Path-filtered CI/CD quality gate workflow
+│       └── release.yml         # Cross-platform binaries, PyPI publish & releases
 ├── .loki/                      # Local configuration and captured artifacts
 │   ├── config.yaml             # Target URL, timeouts, model settings
 │   ├── rules.md                # Human-readable business rules evaluated by AI
@@ -222,16 +233,26 @@ loki-agent/
 │           ├── network.har     # Sanitized HTTP archive (tokens scrubbed)
 │           ├── report.html     # Standalone visual HTML dashboard
 │           └── repro_test.py   # Standalone Playwright reproduction script
+├── installer/                  # Inno Setup Windows installer and code-signing script
 ├── playground/                 # Local testbed with intentional edge-case bugs
 │   └── index.html              # Interactive e-commerce checkout vulnerability playground
 ├── src/
 │   └── loki/
 │       ├── cli.py              # Typer CLI application entry point
+│       ├── config.py           # Config, model registry and AI connection resolution
+│       ├── models.py           # Shared data models (IncidentReport)
+│       ├── safety.py           # Authorization gate for non-localhost targets
 │       ├── ai/
-│       │   ├── brain.py        # LiteLLM integration, diagnosis, rules reasoning
+│       │   ├── brain.py        # Diagnosis and business rules reasoning
+│       │   ├── llm.py          # Single LiteLLM entry point, error summaries, fallbacks
 │       │   └── chat.py         # LokiChatSession: Interactive terminal REPL
 │       ├── engine/
 │       │   ├── sandbox.py      # ChaosSandbox: Isolated Playwright browser & sniffer
+│       │   ├── browser.py      # Browser engine launch and Playwright browser install
+│       │   ├── devices.py      # Mobile device emulation matrix
+│       │   ├── detectors.py    # Pluggable failure detectors (crashes, 4xx/5xx, rejections)
+│       │   ├── api_chaos.py    # API semantic fault and auth chaos injection
+│       │   ├── infra_chaos.py  # Local process/container fault injection
 │       │   ├── reporter.py     # Incident packaging and bundle persistence
 │       │   ├── html_reporter.py # Standalone visual HTML dashboard renderer
 │       │   ├── scrubber.py     # NetworkScrubber: Sanitizes HAR traces & cookies
@@ -239,7 +260,12 @@ loki-agent/
 │       │   ├── replayer.py     # IncidentReplayer: Deterministic reproduction
 │       │   ├── healer.py       # CodeHealer: Autonomous patch synthesizer & verification
 │       │   ├── ci.py           # CIGate: CI environment detection & Step Summary
-│       │   └── scanner.py      # ProjectScanner: Tech stack detector
+│       │   ├── scanner.py      # ProjectScanner: Tech stack detector
+│       │   └── updater.py      # Release check and self-update via uv
+│       ├── services/
+│       │   ├── run.py          # Run use-case shared by the CLI and chat
+│       │   └── heal.py         # Fix / auto-heal use-case
+│       ├── templates/          # repro_test and HTML report templates
 │       └── personas/
 │           ├── base.py         # BasePersona abstract class
 │           ├── rage_clicker.py # Burst clicks and concurrency racing
@@ -247,6 +273,8 @@ loki-agent/
 │           ├── network_tormentor.py # Latency throttling and offline drops
 │           ├── adversary.py    # UI locks bypass and security probes
 │           └── swarm.py        # Multi-vector assault orchestrator
+├── tests/                      # pytest unit test suite
+├── loki.spec                   # PyInstaller build spec for standalone binaries
 ├── requirements.txt            # Core dependencies
 └── AGENTS.md                   # Canonical operating manual for AI coding agents
 ```
