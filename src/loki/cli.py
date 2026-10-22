@@ -320,6 +320,24 @@ def update(
         if not success:
             raise typer.Exit(code=1)
 
+@app.command("install-browser")
+def install_browser_cmd(
+    browser: BrowserChoice = typer.Argument(
+        BrowserChoice.CHROMIUM,
+        help="Browser engine to download and install (chromium, firefox, webkit)",
+    ),
+):
+    """Download and install a Playwright browser engine for chaos testing."""
+    from loki.engine.browser import install_browser
+
+    console.print(f"[bold cyan]🌐 Installing Playwright {browser.value.capitalize()} browser engine...[/bold cyan]")
+    try:
+        install_browser(browser.value)
+        console.print(f"[bold green]✔ Playwright {browser.value.capitalize()} installed successfully![/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Error installing {browser.value}:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
 @app.command()
 def init(
     target_url: str = typer.Option("http://localhost:8000", "--url", "-u", help="Default target URL for this repository"),

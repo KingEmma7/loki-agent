@@ -27,8 +27,9 @@ pyinstaller --clean --noconfirm loki.spec
   git tag -a v1.9.1 -m "Release v1.9.1: Comprehensive Security, Stability & Concurrency Hardening"
   git push origin v1.9.1
   ```
-- The CI pipeline compiles standalone executables for:
-  - Windows: `loki-windows-amd64.exe`
+- The CI pipeline compiles standalone executables and installers for:
+  - Windows Installer (Inno Setup): `loki-setup-windows-amd64.exe` (via `installer/loki.iss`)
+  - Windows Portable: `loki-windows-amd64.exe`
   - Linux: `loki-linux-amd64`
   - macOS (Apple Silicon): `loki-macos-arm64`
 

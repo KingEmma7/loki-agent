@@ -53,6 +53,24 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean loki.spec
 
+      - name: 🔏 Sign Windows Executable & Build Inno Setup Installer
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          $version = python -c "import sys; sys.path.insert(0, 'src'); from loki import __version__; print(__version__)"
+          if ($env:WINDOWS_PFX_BASE64) {
+            [IO.File]::WriteAllBytes("temp-codesign.pfx", [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64))
+            .\installer\sign_windows.ps1 -FilePath "dist\loki.exe" -PfxPath "temp-codesign.pfx" -Password $env:WINDOWS_PFX_PASSWORD
+          }
+          iscc "/DMyAppVersion=$version" installer\loki.iss
+          if ($env:WINDOWS_PFX_BASE64) {
+            .\installer\sign_windows.ps1 -FilePath "dist\loki-setup-windows-amd64.exe" -PfxPath "temp-codesign.pfx" -Password $env:WINDOWS_PFX_PASSWORD
+            Remove-Item "temp-codesign.pfx" -Force -ErrorAction SilentlyContinue
+          }
+
       - name: 🏷️ Rename binary for release
         shell: bash
         run: |
@@ -63,7 +81,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary_name }}
-          path: dist/${{ matrix.binary_name }}
+          path: |
+            dist/${{ matrix.binary_name }}
+            dist/loki-setup-windows-amd64.exe
 
   release:
     name: 📦 Publish GitHub Release

@@ -85,9 +85,10 @@ At the end of an assault session, LOKI's AI Brain (model set in `.loki/config.ya
 
 ### 1. Installation
 
-#### Option A: Standalone Precompiled Binaries (Zero Python Required)
-Download the standalone executable directly from [GitHub Releases](https://github.com/Elabsurdo984/loki-agent/releases):
-* **Windows**: `loki-windows-amd64.exe`
+#### Option A: Standalone Precompiled Binaries & Windows Installer (Zero Python Required)
+Download the installer or standalone executable directly from [GitHub Releases](https://github.com/Elabsurdo984/loki-agent/releases):
+* **Windows Installer (Recommended)**: `loki-setup-windows-amd64.exe` *(Interactive wizard with custom installation path, automatic `PATH` configuration, desktop/Start Menu shortcuts, folder right-click `"Open LOKI Agent here"`, and optional Playwright Chromium setup)*
+* **Windows Portable**: `loki-windows-amd64.exe`
 * **Linux**: `loki-linux-amd64`
 * **macOS (Apple Silicon)**: `loki-macos-arm64`
 

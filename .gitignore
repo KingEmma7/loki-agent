@@ -42,3 +42,9 @@ Thumbs.db
 
 # Others
 SPECIFICATION.md
+
+
+# Code signing certificates and keys
+*.pfx
+*.cer
+*.base64.txt

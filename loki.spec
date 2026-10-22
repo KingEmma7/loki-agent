@@ -155,6 +155,63 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# --- 4. Windows Executable Metadata & Icon ---
+
+import re
+
+init_text = (repo_root / "src" / "loki" / "__init__.py").read_text(encoding="utf-8")
+version_match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init_text)
+version_str = version_match.group(1) if version_match else "1.0.0"
+version_nums = [int(n) for n in re.findall(r"\d+", version_str)[:4]]
+while len(version_nums) < 4:
+    version_nums.append(0)
+version_tuple = tuple(version_nums[:4])
+
+win_version_info = None
+if sys.platform == "win32":
+    from PyInstaller.utils.win32 import versioninfo
+
+    win_version_info = versioninfo.VSVersionInfo(
+        ffi=versioninfo.FixedFileInfo(
+            filevers=version_tuple,
+            prodvers=version_tuple,
+            mask=0x3F,
+            flags=0x0,
+            OS=0x40004,
+            fileType=0x1,
+            subtype=0x0,
+            date=(0, 0),
+        ),
+        kids=[
+            versioninfo.StringFileInfo(
+                [
+                    versioninfo.StringTable(
+                        "040904B0",
+                        [
+                            versioninfo.StringStruct("CompanyName", "Elabsurdo984"),
+                            versioninfo.StringStruct(
+                                "FileDescription",
+                                "LOKI - Autonomous AI Testing & Synthetic Chaos Agent",
+                            ),
+                            versioninfo.StringStruct("FileVersion", version_str),
+                            versioninfo.StringStruct("InternalName", "loki"),
+                            versioninfo.StringStruct(
+                                "LegalCopyright",
+                                "Copyright (c) Elabsurdo984. MIT License.",
+                            ),
+                            versioninfo.StringStruct("OriginalFilename", "loki.exe"),
+                            versioninfo.StringStruct("ProductName", "LOKI Chaos Agent"),
+                            versioninfo.StringStruct("ProductVersion", version_str),
+                        ],
+                    )
+                ]
+            ),
+            versioninfo.VarFileInfo([versioninfo.VarStruct("Translation", [1033, 1200])]),
+        ],
+    )
+
+icon_path = str(repo_root / "assets" / "logo.ico") if (repo_root / "assets" / "logo.ico").exists() else None
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -174,4 +231,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version=win_version_info,
+    icon=icon_path,
 )
