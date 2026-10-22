@@ -23,15 +23,23 @@ DEFAULT_FALLBACK_MODELS = (
 )
 DEFAULT_TIMEOUT = 25
 _TRANSIENT_MARKERS = ("503", "unavailable", "timeout")
-_RATE_LIMIT_MARKERS = ("429", "ratelimiterror", "resource_exhausted", "quota exceeded", "exceeded your current quota")
-_JSON_FENCE = re.compile(r"^```[\w-]*[ \t]*\n(.*?)\n?```$", re.DOTALL)
-_JSON_BLOB = re.compile(r"\{[\s\S]*\}")
-_RETRY_IN = re.compile(r"retry in\s+([0-9]+h)?([0-9]+m)?([0-9]+(?:\.[0-9]+)?s)?", re.IGNORECASE)
-_PROVIDER_HINT = re.compile(
-    r"\b(gemini|openai|anthropic|mistral|groq|bedrock|ollama|azure|cohere)\b",
+_RATE_LIMIT_RE = re.compile(
+    r"\b429\b|ratelimiterror|resource_exhausted|quota exceeded|exceeded your current quota|rate limit reached",
     re.IGNORECASE,
 )
-_MODEL_HINT = re.compile(r"\b((?:gemini|gpt|claude|llama|mistral)[\w./-]*)\b", re.IGNORECASE)
+_AUTH_RE = re.compile(r"\b(401|403)\b|api[ _-]?key|authentication|unauthorized", re.IGNORECASE)
+_JSON_FENCE = re.compile(r"^```[\w-]*[ \t]*\n(.*?)\n?```$", re.DOTALL)
+_LITELLM_PREFIX = re.compile(r"^(?:litellm\.\w+:\s*)+(?:\w+Exception\s*-\s*)?")
+_JSON_BLOB = re.compile(r"\{[\s\S]*\}")
+_RETRY_IN = re.compile(r"(?:retry|try again) in\s+([0-9]+h)?([0-9]+m)?([0-9]+(?:\.[0-9]+)?s)?", re.IGNORECASE)
+_PROVIDER_HINT = re.compile(
+    r"\b(gemini|openai|anthropic|mistral|groq|bedrock|ollama|azure|cohere)(?:exception)?\b",
+    re.IGNORECASE,
+)
+_MODEL_HINT = re.compile(
+    r"\b((?:gemini|gpt|claude|llama|mistral)-[\w./-]*\w|(?:gemini|gpt|claude|llama|mistral)\b(?!exception))",
+    re.IGNORECASE,
+)
 
 Messages = list[dict[str, Any]]
 
@@ -40,8 +48,7 @@ def is_rate_limit_error(error: Exception | None) -> bool:
     """True when the failure looks like HTTP 429 / quota exhaustion."""
     if error is None:
         return False
-    text = f"{type(error).__name__} {error}".lower()
-    return any(marker in text for marker in _RATE_LIMIT_MARKERS)
+    return bool(_RATE_LIMIT_RE.search(f"{type(error).__name__} {error}"))
 
 
 def _provider_message(raw: str) -> str | None:
@@ -86,6 +93,8 @@ def summarize_llm_error(error: Exception | None) -> str:
     if provider_msg is None:
         text = _JSON_BLOB.sub("", text).strip(" -:\n\t")
         text = " ".join(text.split()) or type(error).__name__
+    # litellm prefixes such as "litellm.RateLimitError: OpenAIException - " carry no extra detail.
+    text = _LITELLM_PREFIX.sub("", text) or text
 
     type_name = type(error).__name__
     provider = None
@@ -96,7 +105,7 @@ def summarize_llm_error(error: Exception | None) -> str:
             provider = "OpenAI"
 
     model = None
-    model_match = _MODEL_HINT.search(raw)
+    model_match = _MODEL_HINT.search(provider_msg or "") or _MODEL_HINT.search(raw)
     if model_match:
         model = model_match.group(1)
 
@@ -108,6 +117,8 @@ def summarize_llm_error(error: Exception | None) -> str:
             detail_bits.append("free-tier limit reached")
         elif "quota" in lower:
             detail_bits.append("quota limit reached")
+        elif "rate limit" in lower:
+            detail_bits.append("rate limit reached")
         else:
             detail_bits.append(text[:120])
         if model:
@@ -119,7 +130,7 @@ def summarize_llm_error(error: Exception | None) -> str:
 
     # Missing / invalid API key
     lower_raw = raw.lower()
-    if any(marker in lower_raw for marker in ("api key", "apikey", "authentication", "unauthorized", "401", "403")):
+    if _AUTH_RE.search(raw):
         head = f"{provider} authentication error" if provider else "Authentication error"
         return f"{head}: {text[:160]}"
 
