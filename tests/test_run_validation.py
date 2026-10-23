@@ -55,3 +55,41 @@ def test_run_accepts_valid_duration_and_fault_rate(captured, args, duration, fau
     assert result.exit_code == 1
     assert captured["options"].duration == duration
     assert captured["options"].fault_rate == fault_rate
+
+
+@pytest.mark.parametrize("value", ["landcape", "sideways", "", " landscape "])
+def test_run_rejects_invalid_orientation(captured, value):
+    result = _invoke("--orientation", value)
+    assert result.exit_code == 2
+    assert "Invalid value for '--orientation'" in result.output
+    assert "'portrait', 'landscape'" in result.output
+    assert "options" not in captured
+
+
+@pytest.mark.parametrize(
+    ("args", "orientation"),
+    [
+        ([], "portrait"),
+        (["--orientation", "portrait"], "portrait"),
+        (["--orientation", "landscape"], "landscape"),
+        (["--orientation", "PORTRAIT"], "portrait"),
+        (["--orientation", "LANDSCAPE"], "landscape"),
+        (["--orientation", "Portrait"], "portrait"),
+        (["--orientation", "Landscape"], "landscape"),
+    ],
+)
+def test_run_accepts_valid_orientation(captured, args, orientation):
+    result = _invoke("--device", "iphone-15", *args)
+    assert result.exit_code == 1
+    options = captured["options"]
+    assert options.device == "iphone-15"
+    assert type(options.orientation) is str
+    assert options.orientation == orientation
+
+
+def test_run_help_lists_orientation_choices(captured):
+    result = _invoke("--help")
+    assert result.exit_code == 0
+    orientation_line = next(line for line in result.output.splitlines() if "--orientation" in line)
+    assert "portrait|landscape" in orientation_line
+    assert "options" not in captured

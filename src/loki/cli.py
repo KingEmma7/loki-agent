@@ -271,6 +271,12 @@ class BrowserChoice(str, Enum):
     FIREFOX = "firefox"
     WEBKIT = "webkit"
 
+
+class OrientationChoice(str, Enum):
+    PORTRAIT = "portrait"
+    LANDSCAPE = "landscape"
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """Main entry point for LOKI. With no subcommand, launches the interactive chat."""
@@ -433,9 +439,10 @@ def run(
         "-m",
         help="Emulate a mobile device (e.g. 'iphone-15', 'pixel-7', 'ipad-pro-11')",
     ),
-    orientation: str = typer.Option(
-        "portrait",
+    orientation: OrientationChoice = typer.Option(
+        OrientationChoice.PORTRAIT,
         "--orientation",
+        case_sensitive=False,
         help="Screen orientation for mobile device emulation ('portrait' or 'landscape')",
     ),
     concurrency: int = typer.Option(
@@ -503,7 +510,7 @@ def run(
                 swarm=swarm,
                 journey=journey,
                 device=device,
-                orientation=orientation,
+                orientation=orientation.value,
                 concurrency=concurrency,
                 target_selector=target_selector,
                 api_chaos=api_chaos,
