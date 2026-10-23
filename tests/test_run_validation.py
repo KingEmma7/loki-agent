@@ -1,4 +1,5 @@
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from loki import cli
@@ -20,7 +21,8 @@ def captured(monkeypatch):
 
 
 def _invoke(*args):
-    runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"})
+    # Rich ignores COLUMNS for dumb terminals when CI forces terminal rendering.
+    runner = CliRunner(env={"NO_COLOR": "1", "TERM": "xterm", "COLUMNS": "200"})
     return runner.invoke(app, ["run", "http://localhost:8000", *args])
 
 
@@ -60,9 +62,11 @@ def test_run_accepts_valid_duration_and_fault_rate(captured, args, duration, fau
 @pytest.mark.parametrize("value", ["landcape", "sideways", "", " landscape "])
 def test_run_rejects_invalid_orientation(captured, value):
     result = _invoke("--orientation", value)
+    output = unstyle(result.output)
     assert result.exit_code == 2
-    assert "Invalid value for '--orientation'" in result.output
-    assert "'portrait', 'landscape'" in result.output
+    assert "Invalid value for '--orientation'" in output
+    assert "'portrait'" in output
+    assert "'landscape'" in output
     assert "options" not in captured
 
 
@@ -89,7 +93,8 @@ def test_run_accepts_valid_orientation(captured, args, orientation):
 
 def test_run_help_lists_orientation_choices(captured):
     result = _invoke("--help")
+    output = unstyle(result.output)
     assert result.exit_code == 0
-    orientation_line = next(line for line in result.output.splitlines() if "--orientation" in line)
+    orientation_line = next(line for line in output.splitlines() if "--orientation" in line)
     assert "portrait|landscape" in orientation_line
     assert "options" not in captured
